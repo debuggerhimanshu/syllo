@@ -1,9 +1,99 @@
-import { StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { useState } from "react";
+import {
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from "react-native";
 import { router } from "expo-router";
 
+import { supabase } from "@/lib/supabase";
+
 export default function AuthScreen() {
+  const [isLogin, setIsLogin] = useState(true);
+
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+
+  const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  const [errorMessage, setErrorMessage] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
+
+  const handleAuth = async () => {
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    const cleanEmail = email.trim();
+
+    if (!cleanEmail || !password) {
+      setErrorMessage("Please enter your email and password.");
+      return;
+    }
+
+    if (!cleanEmail.includes("@")) {
+      setErrorMessage("Please enter a valid email address.");
+      return;
+    }
+
+    if (password.length < 6) {
+      setErrorMessage("Password must contain at least 6 characters.");
+      return;
+    }
+
+    try {
+      setLoading(true);
+
+      if (isLogin) {
+        const { error } = await supabase.auth.signInWithPassword({
+          email: cleanEmail,
+          password,
+        });
+
+        if (error) {
+          setErrorMessage(error.message);
+          return;
+        }
+
+        router.replace("/home");
+      } else {
+        const { data, error } = await supabase.auth.signUp({
+          email: cleanEmail,
+          password,
+        });
+
+        if (error) {
+          setErrorMessage(error.message);
+          return;
+        }
+
+        if (data.session) {
+          router.replace("/home");
+        } else {
+          setSuccessMessage(
+            "Account created. Please check your email to verify your account."
+          );
+        }
+      }
+    } catch {
+      setErrorMessage(
+        "Something went wrong. Please try again."
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
-    <View style={styles.container}>
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+    >
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.logo}>SYLLO</Text>
@@ -15,75 +105,138 @@ export default function AuthScreen() {
 
       {/* Main */}
       <View style={styles.content}>
-        <Text style={styles.eyebrow}>WELCOME TO SYLLO</Text>
+        <Text style={styles.eyebrow}>
+          {isLogin ? "WELCOME BACK" : "GET STARTED"}
+        </Text>
 
         <Text style={styles.title}>
-          Your academic
-          {"\n"}
-          journey starts here.
+          {isLogin ? (
+            <>
+              Welcome{"\n"}
+              back to Syllo.
+            </>
+          ) : (
+            <>
+              Start your{"\n"}
+              Syllo journey.
+            </>
+          )}
         </Text>
 
         <Text style={styles.description}>
-          Create your account and let Syllo organize
-          your academic life.
+          {isLogin
+            ? "Log in to continue organizing your academic life."
+            : "Create your account and keep your academic life organized."}
         </Text>
 
-        {/* Inputs */}
+        {/* Form */}
         <View style={styles.form}>
           <View>
             <Text style={styles.label}>EMAIL</Text>
 
             <TextInput
+              value={email}
+              onChangeText={setEmail}
               placeholder="you@example.com"
               placeholderTextColor="#555A66"
               keyboardType="email-address"
               autoCapitalize="none"
+              autoCorrect={false}
               style={styles.input}
+              editable={!loading}
             />
           </View>
 
           <View>
             <Text style={styles.label}>PASSWORD</Text>
 
-            <TextInput
-              placeholder="••••••••"
-              placeholderTextColor="#555A66"
-              secureTextEntry
-              style={styles.input}
-            />
+            <View style={styles.passwordContainer}>
+              <TextInput
+                value={password}
+                onChangeText={setPassword}
+                placeholder="••••••••"
+                placeholderTextColor="#555A66"
+                secureTextEntry={!showPassword}
+                autoCapitalize="none"
+                autoCorrect={false}
+                style={styles.passwordInput}
+                editable={!loading}
+              />
+
+              <TouchableOpacity
+                onPress={() => setShowPassword(!showPassword)}
+                disabled={loading}
+              >
+                <Text style={styles.showPassword}>
+                  {showPassword ? "HIDE" : "SHOW"}
+                </Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
 
-        {/* Login */}
+        {/* Error */}
+        {errorMessage ? (
+          <View style={styles.messageBox}>
+            <Text style={styles.errorText}>
+              {errorMessage}
+            </Text>
+          </View>
+        ) : null}
+
+        {/* Success */}
+        {successMessage ? (
+          <View style={styles.messageBox}>
+            <Text style={styles.successText}>
+              {successMessage}
+            </Text>
+          </View>
+        ) : null}
+
+        {/* Primary button */}
         <TouchableOpacity
           activeOpacity={0.8}
-          style={styles.primaryButton}
-          onPress={() => router.replace("/home")}
+          style={[
+            styles.primaryButton,
+            loading && styles.disabledButton,
+          ]}
+          onPress={handleAuth}
+          disabled={loading}
         >
-          <Text style={styles.primaryButtonText}>
-            Continue
-          </Text>
+          {loading ? (
+            <ActivityIndicator color="#08090D" />
+          ) : (
+            <>
+              <Text style={styles.primaryButtonText}>
+                {isLogin ? "Log In" : "Create Account"}
+              </Text>
 
-          <Text style={styles.arrow}>→</Text>
+              <Text style={styles.arrow}>→</Text>
+            </>
+          )}
         </TouchableOpacity>
 
-        {/* Divider */}
-        <View style={styles.dividerContainer}>
-          <View style={styles.divider} />
-          <Text style={styles.or}>OR</Text>
-          <View style={styles.divider} />
+        {/* Mode switch */}
+        <View style={styles.switchContainer}>
+          <Text style={styles.switchText}>
+            {isLogin
+              ? "Don't have an account?"
+              : "Already have an account?"}
+          </Text>
+
+          <TouchableOpacity
+            onPress={() => {
+              setIsLogin(!isLogin);
+              setErrorMessage("");
+              setSuccessMessage("");
+            }}
+            disabled={loading}
+          >
+            <Text style={styles.switchAction}>
+              {isLogin ? "Sign Up" : "Log In"}
+            </Text>
+          </TouchableOpacity>
         </View>
-
-        {/* Google */}
-        <TouchableOpacity
-          activeOpacity={0.8}
-          style={styles.googleButton}
-        >
-          <Text style={styles.googleIcon}>G</Text>
-          <Text style={styles.googleText}>
-            Continue with Google
-          </Text>
-        </TouchableOpacity>
       </View>
 
       {/* Footer */}
@@ -96,7 +249,7 @@ export default function AuthScreen() {
           .
         </Text>
       </View>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -179,6 +332,53 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
 
+  passwordContainer: {
+    height: 54,
+    borderRadius: 15,
+    backgroundColor: "#111318",
+    borderWidth: 1,
+    borderColor: "#20232B",
+    flexDirection: "row",
+    alignItems: "center",
+    paddingLeft: 16,
+    paddingRight: 14,
+  },
+
+  passwordInput: {
+    flex: 1,
+    color: "#F5F7FA",
+    fontSize: 15,
+  },
+
+  showPassword: {
+    color: "#8B5CF6",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 1,
+  },
+
+  messageBox: {
+    marginTop: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    borderRadius: 12,
+    backgroundColor: "#111318",
+    borderWidth: 1,
+    borderColor: "#20232B",
+  },
+
+  errorText: {
+    color: "#F87171",
+    fontSize: 13,
+    lineHeight: 19,
+  },
+
+  successText: {
+    color: "#4ADE80",
+    fontSize: 13,
+    lineHeight: 19,
+  },
+
   primaryButton: {
     height: 56,
     borderRadius: 17,
@@ -188,6 +388,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     gap: 12,
+  },
+
+  disabledButton: {
+    opacity: 0.7,
   },
 
   primaryButtonText: {
@@ -201,47 +405,23 @@ const styles = StyleSheet.create({
     fontSize: 21,
   },
 
-  dividerContainer: {
+  switchContainer: {
     flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    marginVertical: 22,
-  },
-
-  divider: {
-    flex: 1,
-    height: 1,
-    backgroundColor: "#20232B",
-  },
-
-  or: {
-    color: "#555A66",
-    fontSize: 10,
-    fontWeight: "700",
-  },
-
-  googleButton: {
-    height: 54,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "#20232B",
-    backgroundColor: "#111318",
-    flexDirection: "row",
-    alignItems: "center",
     justifyContent: "center",
-    gap: 12,
+    alignItems: "center",
+    marginTop: 22,
+    gap: 5,
   },
 
-  googleIcon: {
-    color: "#F5F7FA",
-    fontSize: 18,
-    fontWeight: "800",
+  switchText: {
+    color: "#666B78",
+    fontSize: 13,
   },
 
-  googleText: {
-    color: "#D5D8DE",
-    fontSize: 14,
-    fontWeight: "600",
+  switchAction: {
+    color: "#8B5CF6",
+    fontSize: 13,
+    fontWeight: "700",
   },
 
   footer: {
