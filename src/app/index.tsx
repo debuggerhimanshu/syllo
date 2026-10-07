@@ -1,58 +1,30 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { Animated, StyleSheet, Text, View } from "react-native";
 import { router } from "expo-router";
+import { useAuth } from "@/context/AuthContext";
 
-export default function SplashScreen() {
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-  const slideAnim = useRef(new Animated.Value(30)).current;
+export default function Index() {
+  const { session, loading } = useAuth();
 
   useEffect(() => {
-    Animated.parallel([
-      Animated.timing(fadeAnim, {
-        toValue: 1,
-        duration: 700,
-        useNativeDriver: true,
-      }),
-      Animated.timing(slideAnim, {
-        toValue: 0,
-        duration: 700,
-        useNativeDriver: true,
-      }),
-    ]).start();
+    if (loading) return;
 
     const timer = setTimeout(() => {
-      Animated.parallel([
-        Animated.timing(fadeAnim, {
-          toValue: 0,
-          duration: 450,
-          useNativeDriver: true,
-        }),
-        Animated.timing(slideAnim, {
-          toValue: -40,
-          duration: 450,
-          useNativeDriver: true,
-        }),
-      ]).start(() => {
+      if (session) {
+        router.replace("/home");
+      } else {
         router.replace("/onboarding");
-      });
+      }
     }, 1800);
 
     return () => clearTimeout(timer);
-  }, []);
+  }, [loading, session]);
 
   return (
     <View style={styles.container}>
-      <Animated.View
-        style={{
-          opacity: fadeAnim,
-          transform: [{ translateY: slideAnim }],
-        }}
-      >
+      <Animated.View>
         <Text style={styles.logo}>SYLLO</Text>
-
-        <Text style={styles.tagline}>
-          Your academic life, organized.
-        </Text>
+        <Text style={styles.tagline}>Your academic life, organized.</Text>
       </Animated.View>
     </View>
   );
@@ -75,10 +47,9 @@ const styles = StyleSheet.create({
   },
 
   tagline: {
-    color: "#9CA3AF",
-    fontSize: 14,
     marginTop: 12,
-    letterSpacing: 0.5,
+    color: "#8F95A3",
+    fontSize: 13,
     textAlign: "center",
   },
 });
