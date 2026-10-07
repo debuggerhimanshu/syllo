@@ -1,4 +1,5 @@
 import { useState } from "react";
+
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -9,7 +10,9 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+
 import { router } from "expo-router";
+import { makeRedirectUri } from "expo-auth-session";
 
 import { supabase } from "@/lib/supabase";
 
@@ -49,7 +52,16 @@ export default function AuthScreen() {
     try {
       setLoading(true);
 
+      // Deep-link destination for Supabase email verification.
+      const redirectTo = makeRedirectUri({
+        scheme: "syllo",
+        path: "auth/callback",
+      });
+
       if (isLogin) {
+        // -----------------------------
+        // LOGIN
+        // -----------------------------
         const { error } = await supabase.auth.signInWithPassword({
           email: cleanEmail,
           password,
@@ -62,9 +74,15 @@ export default function AuthScreen() {
 
         router.replace("/home");
       } else {
+        // -----------------------------
+        // SIGN UP
+        // -----------------------------
         const { data, error } = await supabase.auth.signUp({
           email: cleanEmail,
           password,
+          options: {
+            emailRedirectTo: redirectTo,
+          },
         });
 
         if (error) {
