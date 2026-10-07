@@ -1,6 +1,28 @@
-import { Tabs } from "expo-router";
+import { Redirect, Tabs } from "expo-router";
+import { ActivityIndicator, StyleSheet, View } from "react-native";
+import { useAuth } from "@/context/AuthContext";
 
 export default function TabsLayout() {
+  const { session, loading } = useAuth();
+
+  // Wait until Supabase finishes checking
+  // whether a session already exists.
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#8B5CF6" />
+      </View>
+    );
+  }
+
+  // User is not authenticated.
+  // Do not allow access to any tab.
+  if (!session) {
+    return <Redirect href="/auth" />;
+  }
+
+  // User is authenticated.
+  // Allow access to the entire tab navigation.
   return (
     <Tabs
       screenOptions={{
@@ -27,7 +49,6 @@ export default function TabsLayout() {
         name="index"
         options={{
           title: "Home",
-          tabBarIcon: () => null,
         }}
       />
 
@@ -35,7 +56,6 @@ export default function TabsLayout() {
         name="schedule"
         options={{
           title: "Schedule",
-          tabBarIcon: () => null,
         }}
       />
 
@@ -43,7 +63,6 @@ export default function TabsLayout() {
         name="notes"
         options={{
           title: "Notes",
-          tabBarIcon: () => null,
         }}
       />
 
@@ -51,7 +70,6 @@ export default function TabsLayout() {
         name="tasks"
         options={{
           title: "Tasks",
-          tabBarIcon: () => null,
         }}
       />
 
@@ -59,9 +77,17 @@ export default function TabsLayout() {
         name="ai"
         options={{
           title: "Syllo AI",
-          tabBarIcon: () => null,
         }}
       />
     </Tabs>
   );
 }
+
+const styles = StyleSheet.create({
+  loadingContainer: {
+    flex: 1,
+    backgroundColor: "#08090D",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+});
