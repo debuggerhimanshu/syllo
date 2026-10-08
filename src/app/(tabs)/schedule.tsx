@@ -5,9 +5,10 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TouchableOpacity,
   View,
 } from "react-native";
-import { useFocusEffect } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 
 import { supabase } from "@/lib/supabase";
 
@@ -172,14 +173,30 @@ export default function ScheduleTab() {
         />
       }
     >
-      <Text style={styles.title}>
-        Schedule
-      </Text>
+      {/* Header */}
+      <View style={styles.header}>
+        <View>
+          <Text style={styles.title}>
+            Schedule
+          </Text>
 
-      <Text style={styles.subtitle}>
-        Your weekly classes
-      </Text>
+          <Text style={styles.subtitle}>
+            Your weekly classes
+          </Text>
+        </View>
 
+        <TouchableOpacity
+          style={styles.addButton}
+          activeOpacity={0.8}
+          onPress={() => router.push("/add-class")}
+        >
+          <Text style={styles.addButtonText}>
+            +
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Schedule */}
       {schedule.length === 0 ? (
         <View style={styles.emptyCard}>
           <Text style={styles.emptyTitle}>
@@ -252,6 +269,13 @@ const styles = StyleSheet.create({
     padding: 28,
   },
 
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 28,
+  },
+
   title: {
     color: "#F5F7FA",
     fontSize: 32,
@@ -261,8 +285,23 @@ const styles = StyleSheet.create({
   subtitle: {
     color: "#777D8A",
     marginTop: 10,
-    marginBottom: 28,
     fontSize: 15,
+  },
+
+  addButton: {
+    width: 46,
+    height: 46,
+    borderRadius: 14,
+    backgroundColor: "#8B5CF6",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  addButtonText: {
+    color: "#FFFFFF",
+    fontSize: 28,
+    fontWeight: "400",
+    lineHeight: 30,
   },
 
   loadingText: {
