@@ -24,102 +24,31 @@ type Course = {
   color: string;
 };
 
-export default function AddClassScreen() {
-
-    const handleSaveClass = async () => {
-  try {
-    setError("");
-
-    // -------------------------
-    // VALIDATION
-    // -------------------------
-
-    if (!selectedCourse) {
-      setError("Please select a course.");
-      return;
-    }
-
-    if (!selectedDay) {
-      setError("Please select a day.");
-      return;
-    }
-
-    // Compare start and end times
-    const startMinutes =
-      startTime.getHours() * 60 +
-      startTime.getMinutes();
-
-    const endMinutes =
-      endTime.getHours() * 60 +
-      endTime.getMinutes();
-
-    if (endMinutes <= startMinutes) {
-      setError("End time must be after start time.");
-      return;
-    }
-
-    // -------------------------
-    // CONVERT TIME
-    // -------------------------
-
-    const formatPostgresTime = (date: Date) => {
-      const hours = String(date.getHours()).padStart(2, "0");
-      const minutes = String(
-        date.getMinutes()
-      ).padStart(2, "0");
-
-      return `${hours}:${minutes}:00`;
-    };
-
-    const postgresStartTime =
-      formatPostgresTime(startTime);
-
-    const postgresEndTime =
-      formatPostgresTime(endTime);
-
-    // -------------------------
-    // SAVE TO SUPABASE
-    // -------------------------
-
-    setSaving(true);
-
-    const { error: insertError } =
-      await supabase.from("classes").insert({
-        course_id: selectedCourse.id,
-        weekday: selectedDay,
-        start_time: postgresStartTime,
-        end_time: postgresEndTime,
-        room: room.trim() || null,
-      });
-
-    if (insertError) {
-      console.error(
-        "Class insert error:",
-        insertError
-      );
-
-      setError(insertError.message);
-      return;
-    }
-
-    // -------------------------
-    // SUCCESS
-    // -------------------------
-
-    router.back();
-  } catch (err) {
-    console.error(
-      "Unexpected save class error:",
-      err
-    );
-
-    setError(
-      "Something went wrong while saving the class."
-    );
-  } finally {
-    setSaving(false);
-  }
+type ExistingClass = {
+  id: string;
+  weekday: number;
+  start_time: string;
+  end_time: string;
+  room: string | null;
+  courses:
+    | {
+        id: string;
+        name: string;
+        code: string | null;
+      }
+    | {
+        id: string;
+        name: string;
+        code: string | null;
+      }[]
+    | null;
 };
+
+export default function AddClassScreen() {
+  // =====================================================
+  // STATE
+  // =====================================================
+
   const [courses, setCourses] = useState<Course[]>([]);
 
   const [selectedCourse, setSelectedCourse] =
@@ -140,26 +69,34 @@ export default function AddClassScreen() {
   const [error, setError] = useState("");
 
   const [room, setRoom] = useState("");
+
   const [saving, setSaving] = useState(false);
 
-  // Time states
-    const [startTime, setStartTime] = useState(() => {
+  // =====================================================
+  // TIME STATE
+  // =====================================================
+
+  const [startTime, setStartTime] = useState(() => {
     const date = new Date();
     date.setHours(10, 0, 0, 0);
     return date;
-    });
+  });
 
-    const [endTime, setEndTime] = useState(() => {
+  const [endTime, setEndTime] = useState(() => {
     const date = new Date();
     date.setHours(11, 0, 0, 0);
     return date;
-    });
+  });
 
   const [showStartPicker, setShowStartPicker] =
     useState(false);
 
   const [showEndPicker, setShowEndPicker] =
     useState(false);
+
+  // =====================================================
+  // DAYS
+  // =====================================================
 
   const days = [
     { label: "Monday", value: 1 },
@@ -170,6 +107,10 @@ export default function AddClassScreen() {
     { label: "Saturday", value: 6 },
     { label: "Sunday", value: 7 },
   ];
+
+  // =====================================================
+  // FETCH COURSES
+  // =====================================================
 
   useEffect(() => {
     fetchCourses();
@@ -182,18 +123,29 @@ export default function AddClassScreen() {
 
       const { data, error } = await supabase
         .from("courses")
-        .select("id, name, code, faculty, color")
-        .order("name", { ascending: true });
+        .select(
+          "id, name, code, faculty, color"
+        )
+        .order("name", {
+          ascending: true,
+        });
 
       if (error) {
-        console.error("Courses fetch error:", error);
+        console.error(
+          "Courses fetch error:",
+          error
+        );
+
         setError(error.message);
         return;
       }
 
       setCourses(data ?? []);
     } catch (err) {
-      console.error("Unexpected courses error:", err);
+      console.error(
+        "Unexpected courses error:",
+        err
+      );
 
       setError(
         "Something went wrong while loading courses."
@@ -203,9 +155,9 @@ export default function AddClassScreen() {
     }
   };
 
-  // =========================
+  // =====================================================
   // TIME HELPERS
-  // =========================
+  // =====================================================
 
   const formatTime = (date: Date) => {
     return date.toLocaleTimeString([], {
@@ -213,6 +165,30 @@ export default function AddClassScreen() {
       minute: "2-digit",
     });
   };
+
+  const timeToMinutes = (time: string) => {
+    const [hours, minutes] = time
+      .split(":")
+      .map(Number);
+
+    return hours * 60 + minutes;
+  };
+
+  const formatPostgresTime = (date: Date) => {
+    const hours = String(
+      date.getHours()
+    ).padStart(2, "0");
+
+    const minutes = String(
+      date.getMinutes()
+    ).padStart(2, "0");
+
+    return `${hours}:${minutes}:00`;
+  };
+
+  // =====================================================
+  // TIME PICKER HANDLERS
+  // =====================================================
 
   const handleStartTimeChange = (
     event: any,
@@ -236,22 +212,242 @@ export default function AddClassScreen() {
     }
   };
 
+  // =====================================================
+  // SAVE CLASS
+  // =====================================================
+
+  const handleSaveClass = async () => {
+    try {
+      setError("");
+
+      // -----------------------------------------------
+      // VALIDATION
+      // -----------------------------------------------
+
+      if (!selectedCourse) {
+        setError("Please select a course.");
+        return;
+      }
+
+      if (!selectedDay) {
+        setError("Please select a day.");
+        return;
+      }
+
+      const startMinutes =
+        startTime.getHours() * 60 +
+        startTime.getMinutes();
+
+      const endMinutes =
+        endTime.getHours() * 60 +
+        endTime.getMinutes();
+
+      if (endMinutes <= startMinutes) {
+        setError(
+          "End time must be after start time."
+        );
+        return;
+      }
+
+      // -----------------------------------------------
+      // CHECK FOR SCHEDULE CONFLICT
+      // -----------------------------------------------
+
+      const {
+        data: existingClassesData,
+        error: conflictError,
+      } = await supabase
+        .from("classes")
+        .select(`
+          id,
+          weekday,
+          start_time,
+          end_time,
+          room,
+          courses (
+            id,
+            name,
+            code
+          )
+        `)
+        .eq("weekday", selectedDay);
+
+      if (conflictError) {
+        console.error(
+          "Conflict check error:",
+          conflictError
+        );
+
+        setError(
+          "Unable to check for schedule conflicts."
+        );
+
+        return;
+      }
+
+      // Explicitly type the Supabase result.
+      // This prevents TypeScript from treating
+      // the relational `courses` value as `never`.
+
+      const existingClasses =
+        (existingClassesData ??
+          []) as ExistingClass[];
+
+      // -----------------------------------------------
+      // COMPARE TIMES
+      // -----------------------------------------------
+
+      const newStartMinutes =
+        startTime.getHours() * 60 +
+        startTime.getMinutes();
+
+      const newEndMinutes =
+        endTime.getHours() * 60 +
+        endTime.getMinutes();
+
+      const conflictingClass =
+        existingClasses.find(
+          (existingClass) => {
+            const existingStart =
+              timeToMinutes(
+                existingClass.start_time
+              );
+
+            const existingEnd =
+              timeToMinutes(
+                existingClass.end_time
+              );
+
+            return (
+              newStartMinutes <
+                existingEnd &&
+              newEndMinutes >
+                existingStart
+            );
+          }
+        );
+
+      // -----------------------------------------------
+      // CONFLICT FOUND
+      // -----------------------------------------------
+
+      if (conflictingClass) {
+        let courseName =
+          "another class";
+
+        if (
+          Array.isArray(
+            conflictingClass.courses
+          )
+        ) {
+          courseName =
+            conflictingClass.courses[0]
+              ?.name ?? "another class";
+        } else {
+          courseName =
+            conflictingClass.courses
+              ?.name ?? "another class";
+        }
+
+        const existingStart =
+          conflictingClass.start_time.slice(
+            0,
+            5
+          );
+
+        const existingEnd =
+          conflictingClass.end_time.slice(
+            0,
+            5
+          );
+
+        setError(
+          `Schedule conflict with ${courseName} (${existingStart} - ${existingEnd}).`
+        );
+
+        return;
+      }
+
+      // -----------------------------------------------
+      // CONVERT TIME
+      // -----------------------------------------------
+
+      const postgresStartTime =
+        formatPostgresTime(startTime);
+
+      const postgresEndTime =
+        formatPostgresTime(endTime);
+
+      // -----------------------------------------------
+      // SAVE TO SUPABASE
+      // -----------------------------------------------
+
+      setSaving(true);
+
+      const {
+        error: insertError,
+      } = await supabase
+        .from("classes")
+        .insert({
+          course_id: selectedCourse.id,
+          weekday: selectedDay,
+          start_time: postgresStartTime,
+          end_time: postgresEndTime,
+          room: room.trim() || null,
+        });
+
+      if (insertError) {
+        console.error(
+          "Class insert error:",
+          insertError
+        );
+
+        setError(insertError.message);
+        return;
+      }
+
+      // -----------------------------------------------
+      // SUCCESS
+      // -----------------------------------------------
+
+      router.back();
+    } catch (err) {
+      console.error(
+        "Unexpected save class error:",
+        err
+      );
+
+      setError(
+        "Something went wrong while saving the class."
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // =====================================================
+  // UI
+  // =====================================================
+
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
       >
-        {/* ========================= */}
+        {/* ================================================= */}
         {/* HEADER */}
-        {/* ========================= */}
+        {/* ================================================= */}
 
         <View style={styles.header}>
           <TouchableOpacity
             style={styles.backButton}
+            activeOpacity={0.8}
             onPress={() => router.back()}
           >
-            <Text style={styles.backIcon}>‹</Text>
+            <Text style={styles.backIcon}>
+              ‹
+            </Text>
           </TouchableOpacity>
 
           <View>
@@ -265,9 +461,9 @@ export default function AddClassScreen() {
           </View>
         </View>
 
-        {/* ========================= */}
+        {/* ================================================= */}
         {/* COURSE */}
-        {/* ========================= */}
+        {/* ================================================= */}
 
         <View style={styles.section}>
           <Text style={styles.label}>
@@ -299,9 +495,9 @@ export default function AddClassScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* ========================= */}
+        {/* ================================================= */}
         {/* ERROR */}
-        {/* ========================= */}
+        {/* ================================================= */}
 
         {error ? (
           <Text style={styles.errorText}>
@@ -309,9 +505,9 @@ export default function AddClassScreen() {
           </Text>
         ) : null}
 
-        {/* ========================= */}
+        {/* ================================================= */}
         {/* DAY */}
-        {/* ========================= */}
+        {/* ================================================= */}
 
         <View style={styles.section}>
           <Text style={styles.label}>
@@ -335,7 +531,8 @@ export default function AddClassScreen() {
               {selectedDay
                 ? days.find(
                     (day) =>
-                      day.value === selectedDay
+                      day.value ===
+                      selectedDay
                   )?.label
                 : "Select a day"}
             </Text>
@@ -346,9 +543,9 @@ export default function AddClassScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* ========================= */}
+        {/* ================================================= */}
         {/* TIME */}
-        {/* ========================= */}
+        {/* ================================================= */}
 
         <View style={styles.row}>
           {/* START TIME */}
@@ -380,7 +577,9 @@ export default function AddClassScreen() {
                 mode="time"
                 is24Hour={false}
                 display="default"
-                onChange={handleStartTimeChange}
+                onChange={
+                  handleStartTimeChange
+                }
               />
             )}
           </View>
@@ -414,15 +613,17 @@ export default function AddClassScreen() {
                 mode="time"
                 is24Hour={false}
                 display="default"
-                onChange={handleEndTimeChange}
+                onChange={
+                  handleEndTimeChange
+                }
               />
             )}
           </View>
         </View>
 
-        {/* ========================= */}
+        {/* ================================================= */}
         {/* ROOM */}
-        {/* ========================= */}
+        {/* ================================================= */}
 
         <View style={styles.section}>
           <Text style={styles.label}>
@@ -436,33 +637,34 @@ export default function AddClassScreen() {
             value={room}
             onChangeText={setRoom}
             autoCapitalize="characters"
-            />
+          />
         </View>
 
-        {/* ========================= */}
+        {/* ================================================= */}
         {/* SAVE */}
-        {/* ========================= */}
+        {/* ================================================= */}
 
         <TouchableOpacity
-  style={[
-    styles.saveButton,
-    saving && styles.saveButtonDisabled,
-  ]}
-  activeOpacity={0.8}
-  onPress={handleSaveClass}
-  disabled={saving}
->
-  {saving ? (
-    <ActivityIndicator
-      size="small"
-      color="#FFFFFF"
-    />
-  ) : (
-    <Text style={styles.saveButtonText}>
-      Save Class
-    </Text>
-  )}
-</TouchableOpacity>
+          style={[
+            styles.saveButton,
+            saving &&
+              styles.saveButtonDisabled,
+          ]}
+          activeOpacity={0.8}
+          onPress={handleSaveClass}
+          disabled={saving}
+        >
+          {saving ? (
+            <ActivityIndicator
+              size="small"
+              color="#FFFFFF"
+            />
+          ) : (
+            <Text style={styles.saveButtonText}>
+              Save Class
+            </Text>
+          )}
+        </TouchableOpacity>
       </ScrollView>
 
       {/* ================================================= */}
@@ -479,14 +681,15 @@ export default function AddClassScreen() {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContainer}>
-
             <View style={styles.modalHeader}>
               <View>
                 <Text style={styles.modalTitle}>
                   Select Course
                 </Text>
 
-                <Text style={styles.modalSubtitle}>
+                <Text
+                  style={styles.modalSubtitle}
+                >
                   Choose the course for this class
                 </Text>
               </View>
@@ -496,7 +699,9 @@ export default function AddClassScreen() {
                   setCourseModalVisible(false)
                 }
               >
-                <Text style={styles.closeButton}>
+                <Text
+                  style={styles.closeButton}
+                >
                   ×
                 </Text>
               </TouchableOpacity>
@@ -509,33 +714,47 @@ export default function AddClassScreen() {
                   color="#8B5CF6"
                 />
 
-                <Text style={styles.loadingText}>
+                <Text
+                  style={styles.loadingText}
+                >
                   Loading courses...
                 </Text>
               </View>
             ) : courses.length === 0 ? (
               <View style={styles.noCourses}>
-                <Text style={styles.noCoursesTitle}>
+                <Text
+                  style={styles.noCoursesTitle}
+                >
                   No courses yet
                 </Text>
 
-                <Text style={styles.noCoursesText}>
+                <Text
+                  style={styles.noCoursesText}
+                >
                   Create a course first before
                   adding a class.
                 </Text>
               </View>
             ) : (
               <ScrollView
-                showsVerticalScrollIndicator={false}
+                showsVerticalScrollIndicator={
+                  false
+                }
               >
                 {courses.map((course) => (
                   <TouchableOpacity
                     key={course.id}
-                    style={styles.courseOption}
+                    style={
+                      styles.courseOption
+                    }
                     activeOpacity={0.8}
                     onPress={() => {
-                      setSelectedCourse(course);
-                      setCourseModalVisible(false);
+                      setSelectedCourse(
+                        course
+                      );
+                      setCourseModalVisible(
+                        false
+                      );
                     }}
                   >
                     <View
@@ -550,7 +769,9 @@ export default function AddClassScreen() {
                     />
 
                     <View
-                      style={styles.courseOptionInfo}
+                      style={
+                        styles.courseOptionInfo
+                      }
                     >
                       <Text
                         style={
@@ -574,7 +795,9 @@ export default function AddClassScreen() {
                     {selectedCourse?.id ===
                     course.id ? (
                       <Text
-                        style={styles.checkmark}
+                        style={
+                          styles.checkmark
+                        }
                       >
                         ✓
                       </Text>
@@ -601,14 +824,15 @@ export default function AddClassScreen() {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContainer}>
-
             <View style={styles.modalHeader}>
               <View>
                 <Text style={styles.modalTitle}>
                   Select Day
                 </Text>
 
-                <Text style={styles.modalSubtitle}>
+                <Text
+                  style={styles.modalSubtitle}
+                >
                   Choose the day for this class
                 </Text>
               </View>
@@ -618,14 +842,18 @@ export default function AddClassScreen() {
                   setDayModalVisible(false)
                 }
               >
-                <Text style={styles.closeButton}>
+                <Text
+                  style={styles.closeButton}
+                >
                   ×
                 </Text>
               </TouchableOpacity>
             </View>
 
             <ScrollView
-              showsVerticalScrollIndicator={false}
+              showsVerticalScrollIndicator={
+                false
+              }
             >
               {days.map((day) => (
                 <TouchableOpacity
@@ -633,19 +861,28 @@ export default function AddClassScreen() {
                   style={styles.dayOption}
                   activeOpacity={0.8}
                   onPress={() => {
-                    setSelectedDay(day.value);
-                    setDayModalVisible(false);
+                    setSelectedDay(
+                      day.value
+                    );
+                    setDayModalVisible(
+                      false
+                    );
                   }}
                 >
                   <Text
-                    style={styles.dayOptionText}
+                    style={
+                      styles.dayOptionText
+                    }
                   >
                     {day.label}
                   </Text>
 
-                  {selectedDay === day.value && (
+                  {selectedDay ===
+                    day.value && (
                     <Text
-                      style={styles.checkmark}
+                      style={
+                        styles.checkmark
+                      }
                     >
                       ✓
                     </Text>
@@ -770,6 +1007,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     marginTop: -12,
     marginBottom: 20,
+    lineHeight: 19,
   },
 
   /* ========================= */
@@ -814,15 +1052,15 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
 
+  saveButtonDisabled: {
+    opacity: 0.6,
+  },
+
   saveButtonText: {
     color: "#FFFFFF",
     fontSize: 15,
     fontWeight: "700",
   },
-
-  saveButtonDisabled: {
-  opacity: 0.6,
-},
 
   /* ========================= */
   /* MODAL */
