@@ -194,7 +194,19 @@ export default function ScheduleTab() {
             +
           </Text>
         </TouchableOpacity>
-      </View>
+        </View>
+
+        <TouchableOpacity
+          style={styles.importButton}
+          activeOpacity={0.8}
+          onPress={() => router.push("/import-ffcs")}
+        >
+          <Text style={styles.importButtonText}>
+            Import FFCS Timetable
+          </Text>
+        </TouchableOpacity> 
+
+        
 
       {/* Schedule */}
       {schedule.length === 0 ? (
@@ -312,6 +324,23 @@ const styles = StyleSheet.create({
     fontWeight: "400",
     lineHeight: 30,
   },
+
+  importButton: {
+  height: 50,
+  borderRadius: 14,
+  backgroundColor: "#111318",
+  borderWidth: 1,
+  borderColor: "#8B5CF6",
+  alignItems: "center",
+  justifyContent: "center",
+  marginBottom: 22,
+},
+
+importButtonText: {
+  color: "#A78BFA",
+  fontSize: 14,
+  fontWeight: "700",
+},
 
   loadingText: {
     color: "#8F95A3",
