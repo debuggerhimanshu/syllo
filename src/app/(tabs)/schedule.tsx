@@ -210,40 +210,49 @@ export default function ScheduleTab() {
         </View>
       ) : (
         schedule.map((item) => (
-          <View
-            key={item.id}
-            style={styles.classCard}
-          >
-            <View style={styles.daySection}>
-              <Text style={styles.day}>
-                {getDayName(item.weekday)}
-              </Text>
+  <TouchableOpacity
+    key={item.id}
+    style={styles.classCard}
+    activeOpacity={0.8}
+    onPress={() =>
+      router.push({
+        pathname: "/class-details",
+        params: {
+          id: item.id,
+        },
+      })
+    }
+  >
+    <View style={styles.daySection}>
+      <Text style={styles.day}>
+        {getDayName(item.weekday)}
+      </Text>
 
-              <Text style={styles.time}>
-                {item.start_time.slice(0, 5)} –{" "}
-                {item.end_time.slice(0, 5)}
-              </Text>
-            </View>
+      <Text style={styles.time}>
+        {item.start_time.slice(0, 5)} –{" "}
+        {item.end_time.slice(0, 5)}
+      </Text>
+    </View>
 
-            <View style={styles.classInfo}>
-              <Text style={styles.courseName}>
-                {item.course?.name ?? "Unknown course"}
-              </Text>
+    <View style={styles.classInfo}>
+      <Text style={styles.courseName}>
+        {item.course?.name ?? "Unknown course"}
+      </Text>
 
-              {item.course?.code && (
-                <Text style={styles.courseCode}>
-                  {item.course.code}
-                </Text>
-              )}
+      {item.course?.code && (
+        <Text style={styles.courseCode}>
+          {item.course.code}
+        </Text>
+      )}
 
-              {item.room && (
-                <Text style={styles.room}>
-                  Room {item.room}
-                </Text>
-              )}
-            </View>
-          </View>
-        ))
+      {item.room && (
+        <Text style={styles.room}>
+          Room {item.room}
+        </Text>
+      )}
+    </View>
+  </TouchableOpacity>
+))
       )}
     </ScrollView>
   );
