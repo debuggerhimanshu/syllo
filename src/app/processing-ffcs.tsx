@@ -1,6 +1,23 @@
-import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
+import { useLocalSearchParams } from "expo-router";
 
 export default function ProcessingFFCS() {
+  const { uri, name, mimeType } =
+    useLocalSearchParams<{
+      uri?: string;
+      name?: string;
+      mimeType?: string;
+    }>();
+
+  const isValidFile =
+    typeof uri === "string" &&
+    uri.length > 0;
+
   return (
     <View style={styles.container}>
       <View style={styles.content}>
@@ -20,18 +37,37 @@ export default function ProcessingFFCS() {
         </Text>
 
         <View style={styles.statusCard}>
-          <View style={styles.statusDot} />
+          <View
+            style={[
+              styles.statusDot,
+              {
+                backgroundColor: isValidFile
+                  ? "#22C55E"
+                  : "#EF4444",
+              },
+            ]}
+          />
 
           <View style={styles.statusContent}>
             <Text style={styles.statusTitle}>
-              Preparing timetable
+              {isValidFile
+                ? "Timetable received"
+                : "No timetable received"}
             </Text>
 
             <Text style={styles.statusText}>
-              Timetable extraction will happen here.
+              {isValidFile
+                ? name ?? "Selected timetable"
+                : "Something went wrong while passing the file."}
             </Text>
           </View>
         </View>
+
+        {isValidFile && (
+          <Text style={styles.debugText}>
+            {mimeType || "Unknown file type"}
+          </Text>
+        )}
       </View>
     </View>
   );
@@ -94,7 +130,6 @@ const styles = StyleSheet.create({
     width: 10,
     height: 10,
     borderRadius: 5,
-    backgroundColor: "#8B5CF6",
   },
 
   statusContent: {
@@ -112,5 +147,11 @@ const styles = StyleSheet.create({
     color: "#777D8A",
     fontSize: 12,
     marginTop: 4,
+  },
+
+  debugText: {
+    color: "#555B68",
+    fontSize: 11,
+    marginTop: 12,
   },
 });

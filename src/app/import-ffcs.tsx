@@ -183,8 +183,15 @@ export default function ImportFFCS() {
             style={styles.continueButton}
             activeOpacity={0.8}
             onPress={() => {
-                router.push("/processing-ffcs");
-            }}
+                router.push({
+                    pathname: "/processing-ffcs",
+                    params: {
+                    uri: file.uri,
+                    name: file.name,
+                    mimeType: file.mimeType ?? "",
+                    },
+                });
+                }}
           >
             <Text style={styles.continueButtonText}>
               Continue
