@@ -15,10 +15,8 @@ import { supabase } from "../lib/supabase";
 import { extractFFCSFromOCRBlocks } from "../lib/ffcs/extractor";
 import { buildParsedCourses } from "../lib/ffcs/parser";
 import type { FFCSOCRBlock } from "../lib/ffcs/extractor";
-
 type ParsedCourse = ReturnType<typeof buildParsedCourses>[number];
 type ParsedClass = ParsedCourse["classes"][number];
-
 const DAYS = [
   "Monday",
   "Tuesday",
@@ -27,14 +25,12 @@ const DAYS = [
   "Friday",
   "Saturday",
 ];
-
 export default function ProcessingFFCS() {
   const { uri, name, mimeType } = useLocalSearchParams<{
     uri?: string;
     name?: string;
     mimeType?: string;
   }>();
-
   const [status, setStatus] = useState("Preparing OCR...");
   const [recognizedText, setRecognizedText] = useState("");
   const [blockCount, setBlockCount] = useState(0);
@@ -46,23 +42,19 @@ export default function ProcessingFFCS() {
   const [confirmed, setConfirmed] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importComplete, setImportComplete] = useState(false);
-
   useEffect(() => {
     let active = true;
-
     async function runOCR() {
       if (!uri || typeof uri !== "string") {
         setStatus("No image was received.");
         return;
       }
-
       if (mimeType === "application/pdf") {
         setStatus(
           "PDF OCR is not supported yet. Please upload a VTOP screenshot."
         );
         return;
       }
-
       try {
         setStatus("Recognizing text from screenshot...");
         setExtracting(true);
@@ -73,25 +65,18 @@ export default function ProcessingFFCS() {
         setReviewMode(false);
         setConfirmed(false);
         setImportComplete(false);
-
         const result = await recognizeText(uri);
-
         if (!active) return;
-
         setRecognizedText(result.text);
         setBlockCount(result.blocks.length);
-
         const extraction = extractFFCSFromOCRBlocks(
           result.blocks as FFCSOCRBlock[]
         );
-
         const parsed = buildParsedCourses(
           extraction.courses,
           extraction.heatmapCells
         );
-
         if (!active) return;
-
         setCourses(parsed);
         setWarnings(extraction.warnings);
         setStatus(
@@ -99,12 +84,10 @@ export default function ProcessingFFCS() {
             ? "OCR and timetable extraction completed."
             : "OCR completed, but no courses were detected."
         );
-
         console.log("FFCS parsed timetable:", parsed);
         console.log("FFCS warnings:", extraction.warnings);
       } catch (error) {
         console.error("FFCS OCR/extraction error:", error);
-
         if (active) {
           setStatus(
             error instanceof Error
@@ -116,14 +99,11 @@ export default function ProcessingFFCS() {
         if (active) setExtracting(false);
       }
     }
-
     void runOCR();
-
     return () => {
       active = false;
     };
   }, [uri, mimeType]);
-
   const classCount = useMemo(
     () =>
       courses.reduce(
@@ -132,7 +112,6 @@ export default function ProcessingFFCS() {
       ),
     [courses]
   );
-
   const updateClass = (
     courseCode: string,
     classIndex: number,
@@ -140,7 +119,6 @@ export default function ProcessingFFCS() {
   ) => {
     setConfirmed(false);
     setImportComplete(false);
-
     setCourses((current) =>
       current.map((course) =>
         course.code !== courseCode
@@ -154,7 +132,6 @@ export default function ProcessingFFCS() {
       )
     );
   };
-
   const changeDay = (
     courseCode: string,
     classIndex: number,
@@ -162,17 +139,13 @@ export default function ProcessingFFCS() {
   ) => {
     const course = courses.find((item) => item.code === courseCode);
     const item = course?.classes[classIndex];
-
     if (!item) return;
-
     const currentDay = Math.max(1, Math.min(6, item.weekday));
     const nextDay = ((currentDay - 1 + direction + 6) % 6) + 1;
-
     updateClass(courseCode, classIndex, {
       weekday: nextDay,
     });
   };
-
   const removeClass = (courseCode: string, classIndex: number) => {
     Alert.alert(
       "Remove class?",
@@ -185,7 +158,6 @@ export default function ProcessingFFCS() {
           onPress: () => {
             setConfirmed(false);
             setImportComplete(false);
-
             setCourses((current) =>
               current.map((course) =>
                 course.code !== courseCode
@@ -203,7 +175,6 @@ export default function ProcessingFFCS() {
       ]
     );
   };
-
   const copyText = async (text: string, label: string) => {
     try {
       await Clipboard.setStringAsync(text);
@@ -213,15 +184,12 @@ export default function ProcessingFFCS() {
       Alert.alert("Copy failed", "Unable to copy to the clipboard.");
     }
   };
-
   const copyOCRText = async () => {
     if (!recognizedText.trim()) {
       Alert.alert("Nothing to copy", "No OCR text is available yet.");
       return;
     }
-
     setCopying(true);
-
     try {
       await Clipboard.setStringAsync(recognizedText);
       Alert.alert("Copied!", "Recognized OCR text copied.");
@@ -232,19 +200,16 @@ export default function ProcessingFFCS() {
       setCopying(false);
     }
   };
-
   const copyTimetable = () => {
     if (!courses.length) {
       Alert.alert("Nothing to copy", "No parsed courses are available.");
       return;
     }
-
     void copyText(
       JSON.stringify(courses, null, 2),
       "Reviewed timetable"
     );
   };
-
   const confirmReview = () => {
     Alert.alert(
       "Confirm timetable review?",
@@ -267,10 +232,8 @@ export default function ProcessingFFCS() {
       ]
     );
   };
-
   const importTimetable = async () => {
     if (importing) return;
-
     if (!confirmed) {
       Alert.alert(
         "Review required",
@@ -278,15 +241,12 @@ export default function ProcessingFFCS() {
       );
       return;
     }
-
     const importableCourses = courses.filter(
       (course) => course.classes.length > 0
     );
-
     const skippedCourses = courses.filter(
       (course) => course.classes.length === 0
     );
-
     if (importableCourses.length === 0) {
       Alert.alert(
         "No classes to import",
@@ -294,7 +254,6 @@ export default function ProcessingFFCS() {
       );
       return;
     }
-
     // Validate the complete batch before making database changes.
     for (const course of importableCourses) {
       for (const item of course.classes) {
@@ -304,7 +263,6 @@ export default function ProcessingFFCS() {
         const validEnd = /^([01]\d|2[0-3]):[0-5]\d$/.test(
           item.end_time
         );
-
         if (
           !Number.isInteger(item.weekday) ||
           item.weekday < 1 ||
@@ -322,20 +280,16 @@ export default function ProcessingFFCS() {
         }
       }
     }
-
     setImporting(true);
     setImportComplete(false);
-
     let inserted = 0;
     let skippedDuplicates = 0;
     const errors: string[] = [];
-
     try {
       const {
         data: { user },
         error: authError,
       } = await supabase.auth.getUser();
-
       if (authError || !user) {
         Alert.alert(
           "Sign-in required",
@@ -343,7 +297,6 @@ export default function ProcessingFFCS() {
         );
         return;
       }
-
       for (const course of importableCourses) {
         // Only find courses owned by the signed-in user.
         const { data: matchingCourses, error: courseLookupError } =
@@ -353,24 +306,20 @@ export default function ProcessingFFCS() {
             .eq("user_id", user.id)
             .eq("code", course.code)
             .limit(2);
-
         if (courseLookupError) {
           errors.push(
             `${course.code}: ${courseLookupError.message}`
           );
           continue;
         }
-
         if ((matchingCourses?.length ?? 0) > 1) {
           errors.push(
             `${course.code}: multiple matching courses exist. Resolve the duplicates before importing.`
           );
           continue;
         }
-
         let courseId: string | undefined =
           matchingCourses?.[0]?.id;
-
         if (!courseId) {
           const { data: createdCourse, error: createCourseError } =
             await supabase
@@ -384,7 +333,6 @@ export default function ProcessingFFCS() {
               })
               .select("id")
               .single();
-
           if (createCourseError || !createdCourse?.id) {
             errors.push(
               `${course.code}: ${
@@ -394,44 +342,56 @@ export default function ProcessingFFCS() {
             );
             continue;
           }
-
           courseId = createdCourse.id;
         }
-
         // Guard against an unresolved course ID before querying/inserting classes.
         if (!courseId) {
           errors.push(`${course.code}: could not determine the course ID.`);
           continue;
         }
-
         const { data: existingClasses, error: classLookupError } =
           await supabase
             .from("classes")
             .select("weekday, start_time, end_time, slot")
             .eq("course_id", courseId);
-
         if (classLookupError) {
           errors.push(
             `${course.code}: could not check existing classes: ${classLookupError.message}`
           );
           continue;
         }
-
-        const pendingClasses = course.classes.filter((item) => {
-          const duplicate = (existingClasses ?? []).some(
-            (existing) =>
-              existing.weekday === item.weekday &&
-              existing.start_time === item.start_time &&
-              existing.end_time === item.end_time &&
-              existing.slot === item.slot
-          );
-
-          if (duplicate) skippedDuplicates += 1;
-          return !duplicate;
-        });
-
+const seenInThisImport = new Set<string>();
+const pendingClasses = course.classes.filter((item) => {
+  const normalizeTime = (value: string) => value.trim().slice(0, 5);
+  const normalizeSlot = (value: string | null | undefined) =>
+    (value ?? "").trim().toUpperCase();
+  const key = [
+    item.weekday,
+    normalizeTime(item.start_time),
+    normalizeTime(item.end_time),
+    normalizeSlot(item.slot),
+  ].join("|");
+  // Skip duplicate entries within this import.
+  if (seenInThisImport.has(key)) {
+    skippedDuplicates += 1;
+    return false;
+  }
+  seenInThisImport.add(key);
+  // Skip classes that already exist in Supabase.
+  const duplicate = (existingClasses ?? []).some(
+    (existing) =>
+      existing.weekday === item.weekday &&
+      normalizeTime(existing.start_time) === normalizeTime(item.start_time) &&
+      normalizeTime(existing.end_time) === normalizeTime(item.end_time) &&
+      normalizeSlot(existing.slot) === normalizeSlot(item.slot)
+  );
+  if (duplicate) {
+    skippedDuplicates += 1;
+    return false;
+  }
+  return true;
+});
         if (pendingClasses.length === 0) continue;
-
         const rows = pendingClasses.map((item) => ({
           course_id: courseId,
           weekday: item.weekday,
@@ -440,38 +400,35 @@ export default function ProcessingFFCS() {
           room: item.room ?? null,
           slot: item.slot,
         }));
-
         const { data: insertedRows, error: insertError } =
-          await supabase
-            .from("classes")
-            .insert(rows)
-            .select("id");
-
+        await supabase
+          .from("classes")
+          .upsert(rows, {
+            onConflict:
+              "course_id,weekday,start_time,end_time,slot,valid_from,valid_until",
+            ignoreDuplicates: true,
+          })
+          .select("id");
         if (insertError) {
           errors.push(
             `${course.code}: failed to insert classes: ${insertError.message}`
           );
           continue;
         }
-
         inserted += insertedRows?.length ?? rows.length;
       }
-
       setImportComplete(errors.length === 0);
-
       const summary = [
         `New classes imported: ${inserted}`,
         `Existing duplicates skipped: ${skippedDuplicates}`,
         `Courses without classes skipped: ${skippedCourses.length}`,
         `Errors: ${errors.length}`,
       ].join("\n");
-
       setStatus(
         errors.length === 0
           ? "Timetable import completed."
           : "Timetable import completed with some errors."
       );
-
       Alert.alert(
         errors.length === 0 ? "Import successful" : "Import finished with errors",
         `${summary}${
@@ -493,7 +450,6 @@ export default function ProcessingFFCS() {
       setImporting(false);
     }
   };
-
     return (
     <ScrollView
       style={styles.container}
@@ -501,15 +457,12 @@ export default function ProcessingFFCS() {
       keyboardShouldPersistTaps="handled"
     >
       <Text style={styles.eyebrow}>SYLLO · TIMETABLE IMPORT</Text>
-
       <Text style={styles.title}>
         {reviewMode ? "Review timetable" : "FFCS Import"}
       </Text>
-
       <Text style={styles.subtitle}>
         {typeof name === "string" ? name : "Selected timetable"}
       </Text>
-
       <View style={styles.statusCard}>
         {extracting || importing ? (
           <ActivityIndicator color="#A78BFA" />
@@ -527,10 +480,8 @@ export default function ProcessingFFCS() {
             ]}
           />
         )}
-
         <Text style={styles.statusText}>{status}</Text>
       </View>
-
       {blockCount > 0 && (
         <View style={styles.statsRow}>
           <Stat label="OCR blocks" value={blockCount} />
@@ -538,13 +489,11 @@ export default function ProcessingFFCS() {
           <Stat label="Classes" value={classCount} />
         </View>
       )}
-
       {warnings.length > 0 && (
         <View style={styles.warningCard}>
           <Text style={styles.warningTitle}>
             Review required ({warnings.length})
           </Text>
-
           {warnings.map((warning, index) => (
             <Text
               key={`${warning}-${index}`}
@@ -555,20 +504,17 @@ export default function ProcessingFFCS() {
           ))}
         </View>
       )}
-
       {courses.length > 0 && (
         <View style={styles.panel}>
           <View style={styles.panelHeader}>
             <View style={styles.flex}>
               <Text style={styles.panelTitle}>Extracted courses</Text>
-
               <Text style={styles.muted}>
                 {reviewMode
                   ? "Correct the weekday or remove incorrect entries."
                   : "Check the extracted entries before continuing."}
               </Text>
             </View>
-
             <TouchableOpacity
               style={styles.smallButton}
               onPress={copyTimetable}
@@ -576,16 +522,13 @@ export default function ProcessingFFCS() {
               <Text style={styles.buttonText}>Copy JSON</Text>
             </TouchableOpacity>
           </View>
-
           {courses.map((course) => (
             <View key={course.code} style={styles.courseCard}>
               <Text style={styles.courseCode}>{course.code}</Text>
               <Text style={styles.courseName}>{course.name}</Text>
-
               <Text style={styles.muted}>
                 Faculty: {course.faculty ?? "Unknown"}
               </Text>
-
               {course.classes.length === 0 ? (
                 <Text style={styles.emptyText}>
                   No scheduled classes detected. Check this course manually.
@@ -598,17 +541,14 @@ export default function ProcessingFFCS() {
                   >
                     <View style={styles.classTopRow}>
                       <Text style={styles.slot}>{item.slot}</Text>
-
                       <Text style={styles.classTime}>
                         {item.start_time}–{item.end_time}
                       </Text>
                     </View>
-
                     <Text style={styles.classDetails}>
                       {DAYS[item.weekday - 1] ?? `Day ${item.weekday}`}{" "}
                       · {item.room ?? "Room unknown"}
                     </Text>
-
                     {reviewMode && (
                       <View style={styles.actionsRow}>
                         <TouchableOpacity
@@ -621,11 +561,9 @@ export default function ProcessingFFCS() {
                             ‹ Day
                           </Text>
                         </TouchableOpacity>
-
                         <Text style={styles.editHint}>
                           Change weekday
                         </Text>
-
                         <TouchableOpacity
                           style={styles.dayButton}
                           onPress={() =>
@@ -636,7 +574,6 @@ export default function ProcessingFFCS() {
                             Day ›
                           </Text>
                         </TouchableOpacity>
-
                         <TouchableOpacity
                           style={styles.removeButton}
                           onPress={() =>
@@ -656,7 +593,6 @@ export default function ProcessingFFCS() {
           ))}
         </View>
       )}
-
       {courses.length > 0 && (
         <View style={styles.bottomActions}>
           {!reviewMode && !confirmed && (
@@ -669,7 +605,6 @@ export default function ProcessingFFCS() {
               </Text>
             </TouchableOpacity>
           )}
-
           {reviewMode && (
             <TouchableOpacity
               style={styles.primaryButton}
@@ -680,7 +615,6 @@ export default function ProcessingFFCS() {
               </Text>
             </TouchableOpacity>
           )}
-
           {confirmed && (
             <View style={styles.confirmedCard}>
               <Text style={styles.confirmedTitle}>
@@ -688,13 +622,11 @@ export default function ProcessingFFCS() {
                   ? "Import completed"
                   : "Review confirmed"}
               </Text>
-
               <Text style={styles.muted}>
                 {importComplete
                   ? "The import completed without reported errors. Courses with no detected classes were skipped."
                   : "Your reviewed timetable is ready to import. Courses without detected classes will be skipped."}
               </Text>
-
               <TouchableOpacity
                 style={[
                   styles.primaryButton,
@@ -713,7 +645,6 @@ export default function ProcessingFFCS() {
                   </Text>
                 )}
               </TouchableOpacity>
-
               <TouchableOpacity
                 style={styles.secondaryButton}
                 onPress={() => {
@@ -731,11 +662,9 @@ export default function ProcessingFFCS() {
           )}
         </View>
       )}
-
       <View style={styles.panel}>
         <View style={styles.panelHeader}>
           <Text style={styles.panelTitle}>Recognized OCR text</Text>
-
           <TouchableOpacity
             style={styles.smallButton}
             onPress={copyOCRText}
@@ -746,7 +675,6 @@ export default function ProcessingFFCS() {
             </Text>
           </TouchableOpacity>
         </View>
-
         <Text selectable style={styles.ocrText}>
           {recognizedText || "Waiting for OCR output..."}
         </Text>
@@ -754,7 +682,6 @@ export default function ProcessingFFCS() {
     </ScrollView>
   );
 }
-
 function Stat({
   label,
   value,
@@ -769,7 +696,6 @@ function Stat({
     </View>
   );
 }
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,
