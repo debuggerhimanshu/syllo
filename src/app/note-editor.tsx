@@ -91,6 +91,7 @@ export default function NoteEditor() {
   const [courses, setCourses] = useState<Course[]>([]);
   const [selectedCourseId, setSelectedCourseId] =
     useState(initialCourseId);
+  const [courseDropdownOpen, setCourseDropdownOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [noteDate, setNoteDate] = useState(today());
@@ -606,67 +607,118 @@ if (pendingImages.length > 0) {
           <View style={styles.headerSpacer} />
         </View>
 
-        <Text style={styles.label}>COURSE</Text>
+        
+<Text style={styles.label}>COURSE</Text>
 
-        {courses.length === 0 ? (
-          <View style={styles.emptyCard}>
-            <Text style={styles.muted}>
-              No registered courses found. Add a course before creating a
-              course note.
+{courses.length === 0 ? (
+  <View style={styles.emptyCard}>
+    <Text style={styles.muted}>
+      No registered courses found. Add a course before creating a course note.
+    </Text>
+  </View>
+) : (
+  <>
+    <Pressable
+      style={styles.courseDropdown}
+      onPress={() => setCourseDropdownOpen((open) => !open)}
+    >
+      {(() => {
+        const selectedCourse = courses.find(
+          (course) => course.id === selectedCourseId
+        );
+
+        return (
+          <>
+            <View
+              style={[
+                styles.courseDot,
+                {
+                  backgroundColor: selectedCourse?.color || "#8B5CF6",
+                },
+              ]}
+            />
+
+            <View style={styles.courseDropdownInfo}>
+              <Text style={styles.courseDropdownCode}>
+                {selectedCourse?.code || "Select a course"}
+              </Text>
+
+              <Text
+                style={styles.courseDropdownName}
+                numberOfLines={1}
+              >
+                {selectedCourse?.name || "Choose a course for this note"}
+              </Text>
+            </View>
+
+            <Text style={styles.dropdownArrow}>
+              {courseDropdownOpen ? "▲" : "▼"}
             </Text>
-          </View>
-        ) : (
-          <View style={styles.courseGrid}>
-            {courses.map((course) => {
-              const selected = selectedCourseId === course.id;
-              const accent = course.color || "#8B5CF6";
+          </>
+        );
+      })()}
+    </Pressable>
 
-              return (
-                <Pressable
-                  key={course.id}
-                  onPress={() => setSelectedCourseId(course.id)}
+    {courseDropdownOpen && (
+      <View style={styles.courseDropdownList}>
+        {courses.map((course) => {
+          const selected = selectedCourseId === course.id;
+          const accent = course.color || "#8B5CF6";
+
+          return (
+            <Pressable
+              key={course.id}
+              onPress={() => {
+                setSelectedCourseId(course.id);
+                setCourseDropdownOpen(false);
+              }}
+              style={[
+                styles.courseDropdownOption,
+                selected && {
+                  backgroundColor: `${accent}20`,
+                  borderColor: accent,
+                },
+              ]}
+            >
+              <View
+                style={[
+                  styles.courseDot,
+                  { backgroundColor: accent },
+                ]}
+              />
+
+              <View style={styles.courseDropdownInfo}>
+                <Text
                   style={[
-                    styles.courseChip,
-                    selected && {
-                      borderColor: accent,
-                      backgroundColor: `${accent}20`,
-                    },
+                    styles.courseDropdownCode,
+                    selected && { color: accent },
                   ]}
                 >
-                  <View
-                    style={[
-                      styles.courseDot,
-                      { backgroundColor: accent },
-                    ]}
-                  />
-                  <View style={styles.courseChipInfo}>
-                    <Text
-                      style={[
-                        styles.courseCode,
-                        selected && { color: accent },
-                      ]}
-                    >
-                      {course.code}
-                    </Text>
-                    <Text
-                      style={styles.courseName}
-                      numberOfLines={2}
-                    >
-                      {course.name}
-                    </Text>
-                  </View>
-                  {selected ? (
-                    <Text style={[styles.check, { color: accent }]}>
-                      ✓
-                    </Text>
-                  ) : null}
-                </Pressable>
-              );
-            })}
-          </View>
-        )}
+                  {course.code}
+                </Text>
 
-        <Text style={styles.label}>NOTE TITLE</Text>
+                <Text
+                  style={styles.courseDropdownName}
+                  numberOfLines={2}
+                >
+                  {course.name}
+                </Text>
+              </View>
+
+              {selected && (
+                <Text style={[styles.check, { color: accent }]}>
+                  ✓
+                </Text>
+              )}
+            </Pressable>
+          );
+        })}
+      </View>
+    )}
+  </>
+)}
+
+
         <TextInput
           value={title}
           onChangeText={setTitle}
@@ -1297,6 +1349,63 @@ closeImageViewerText: {
   fontSize: 22,
   fontWeight: "600",
 },
+
+
+courseDropdown: {
+  flexDirection: "row",
+  alignItems: "center",
+  gap: 12,
+  backgroundColor: "#11131A",
+  borderWidth: 1,
+  borderColor: "#292C38",
+  borderRadius: 15,
+  padding: 15,
+  marginBottom: 12,
+},
+
+courseDropdownInfo: {
+  flex: 1,
+  gap: 3,
+},
+
+courseDropdownCode: {
+  color: "#A78BFA",
+  fontSize: 11,
+  fontWeight: "800",
+},
+
+courseDropdownName: {
+  color: "#F5F7FA",
+  fontSize: 14,
+  fontWeight: "600",
+},
+
+dropdownArrow: {
+  color: "#A78BFA",
+  fontSize: 12,
+  fontWeight: "800",
+},
+
+courseDropdownList: {
+  marginTop: 8,
+  backgroundColor: "#11131A",
+  borderWidth: 1,
+  borderColor: "#292C38",
+  borderRadius: 15,
+  padding: 6,
+  gap: 6,
+},
+
+courseDropdownOption: {
+  flexDirection: "row",
+  alignItems: "center",
+  gap: 12,
+  borderWidth: 1,
+  borderColor: "transparent",
+  borderRadius: 11,
+  padding: 12,
+},
+
 
 
 });
