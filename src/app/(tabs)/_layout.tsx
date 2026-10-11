@@ -1,4 +1,5 @@
 import { Redirect, Tabs } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 import { ActivityIndicator, StyleSheet, View } from "react-native";
 import { useAuth } from "@/context/AuthContext";
 
@@ -45,40 +46,76 @@ export default function TabsLayout() {
         },
       }}
     >
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: "Home",
-        }}
+      
+<Tabs.Screen
+  name="index"
+  options={{
+    title: "Home",
+    tabBarIcon: ({ color, size, focused }) => (
+      <Ionicons
+        name={focused ? "home" : "home-outline"}
+        size={size}
+        color={color}
       />
+    ),
+  }}
+/>
 
-      <Tabs.Screen
-        name="schedule"
-        options={{
-          title: "Schedule",
-        }}
+<Tabs.Screen
+  name="schedule"
+  options={{
+    title: "Schedule",
+    tabBarIcon: ({ color, size, focused }) => (
+      <Ionicons
+        name={focused ? "calendar" : "calendar-outline"}
+        size={size}
+        color={color}
       />
+    ),
+  }}
+/>
 
-      <Tabs.Screen
-        name="notes"
-        options={{
-          title: "Notes",
-        }}
+<Tabs.Screen
+  name="notes"
+  options={{
+    title: "Notes",
+    tabBarIcon: ({ color, size, focused }) => (
+      <Ionicons
+        name={focused ? "book" : "book-outline"}
+        size={size}
+        color={color}
       />
+    ),
+  }}
+/>
 
-      <Tabs.Screen
-        name="tasks"
-        options={{
-          title: "Tasks",
-        }}
+<Tabs.Screen
+  name="tasks"
+  options={{
+    title: "Tasks",
+    tabBarIcon: ({ color, size, focused }) => (
+      <Ionicons
+        name={focused ? "checkbox" : "checkbox-outline"}
+        size={size}
+        color={color}
       />
+    ),
+  }}
+/>
 
-      <Tabs.Screen
-        name="ai"
-        options={{
-          title: "Syllo AI",
-        }}
+<Tabs.Screen
+  name="ai"
+  options={{
+    title: "Syllo AI",
+    tabBarIcon: ({ color, size }) => (
+      <Ionicons
+        name="sparkles-outline"
+        size={size}
+        color={color}
       />
+    ),
+  }}
+/>
     </Tabs>
   );
 }
