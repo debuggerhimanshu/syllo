@@ -1,5 +1,5 @@
-import { Stack } from "expo-router";
 
+import { Stack } from "expo-router";
 import { AuthProvider } from "@/context/AuthContext";
 
 export default function RootLayout() {
@@ -13,7 +13,16 @@ export default function RootLayout() {
             backgroundColor: "#08090D",
           },
         }}
-      />
+      >
+        <Stack.Screen name="(tabs)" />
+        <Stack.Screen
+          name="note-editor"
+          options={{
+            headerShown: false,
+            animation: "slide_from_right",
+          }}
+        />
+      </Stack>
     </AuthProvider>
   );
 }
