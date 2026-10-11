@@ -1,8 +1,11 @@
 
 import { useCallback, useEffect, useState } from "react";
+import * as ImagePicker from "expo-image-picker";
 import {
   ActivityIndicator,
   Alert,
+  Image,
+  Modal,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -33,6 +36,23 @@ type NoteRecord = {
   note_date: string;
   priority: Priority;
   is_pinned: boolean;
+};
+
+type NoteAttachment = {
+  id: string;
+  note_id: string;
+  storage_path: string;
+  file_name: string;
+  mime_type: "image/jpeg" | "image/png" | "image/webp";
+  file_size: number;
+  signedUrl?: string;
+};
+
+type PendingImage = {
+  uri: string;
+  fileName: string;
+  mimeType: "image/jpeg" | "image/png" | "image/webp";
+  fileSize: number;
 };
 
 const today = () => {
@@ -81,6 +101,266 @@ export default function NoteEditor() {
   const [saving, setSaving] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [attachments, setAttachments] = useState<NoteAttachment[]>([]);
+  const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
+  const [pickingImages, setPickingImages] = useState(false);
+  const [uploadingImages, setUploadingImages] = useState(false);
+
+  const [fullScreenImage, setFullScreenImage] = useState<string | null>(null);
+
+  const pickImages = async () => {
+  try {
+    setPickingImages(true);
+
+    const permission =
+      await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+    if (!permission.granted) {
+      Alert.alert(
+        "Permission required",
+        "Allow photo access to attach images to your notes."
+      );
+      return;
+    }
+
+    const remainingSlots = 10 - attachments.length - pendingImages.length;
+
+    if (remainingSlots <= 0) {
+      Alert.alert(
+        "Attachment limit",
+        "You can attach up to 10 images to a note."
+      );
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      allowsMultipleSelection: true,
+      selectionLimit: remainingSlots,
+      quality: 0.8,
+    });
+
+    if (result.canceled) return;
+
+    const selected: PendingImage[] = [];
+    const rejected: string[] = [];
+
+    for (const asset of result.assets) {
+      const mimeType = asset.mimeType?.toLowerCase();
+
+      if (
+        mimeType !== "image/jpeg" &&
+        mimeType !== "image/png" &&
+        mimeType !== "image/webp"
+      ) {
+        rejected.push(`${asset.fileName ?? "Image"}: unsupported format`);
+        continue;
+      }
+
+      if (asset.fileSize == null || asset.fileSize > 2 * 1024 * 1024) {
+        rejected.push(`${asset.fileName ?? "Image"}: over 2 MB or size unknown`);
+        continue;
+      }
+
+      selected.push({
+        uri: asset.uri,
+        fileName: asset.fileName ?? `image-${Date.now()}.jpg`,
+        mimeType,
+        fileSize: asset.fileSize,
+      });
+    }
+
+    setPendingImages((current) => [...current, ...selected]);
+
+    if (rejected.length > 0) {
+      Alert.alert(
+        "Some images were skipped",
+        rejected.join("\n")
+      );
+    }
+  } catch (err) {
+    console.error("Image picker failed:", err);
+    Alert.alert("Couldn't select images", "Please try again.");
+  } finally {
+    setPickingImages(false);
+  }
+};
+
+  const loadAttachments = useCallback(async (noteId: string) => {
+  const { data, error } = await supabase
+    .from("note_attachments")
+    .select("id, note_id, storage_path, file_name, mime_type, file_size")
+    .eq("note_id", noteId)
+    .order("created_at", { ascending: true });
+
+  if (error) throw error;
+
+  const records = (data ?? []) as NoteAttachment[];
+
+  const withUrls = await Promise.all(
+    records.map(async (attachment) => {
+      const { data: signedData, error: signedError } =
+        await supabase.storage
+          .from("note-images")
+          .createSignedUrl(attachment.storage_path, 3600);
+
+      if (signedError) {
+        console.error("Could not create image URL:", signedError);
+        return attachment;
+      }
+
+      return { ...attachment, signedUrl: signedData.signedUrl };
+    })
+  );
+
+    setAttachments(withUrls);
+}, []);
+
+const uploadPendingImages = async (
+  noteId: string,
+  currentUserId: string
+): Promise<boolean> => {
+  if (pendingImages.length === 0) return true;
+
+  setUploadingImages(true);
+
+  const uploadedUris: string[] = [];
+  const failures: string[] = [];
+
+  try {
+    for (const image of pendingImages) {
+      let storagePath: string | null = null;
+
+      try {
+        const response = await fetch(image.uri);
+        if (!response.ok) {
+          throw new Error("Could not read the selected image.");
+        }
+
+        const fileBuffer = await response.arrayBuffer();
+
+        if (fileBuffer.byteLength === 0) {
+          throw new Error("The selected image is empty.");
+        }
+
+        if (fileBuffer.byteLength > 2 * 1024 * 1024) {
+          throw new Error("Image exceeds the 2 MB limit.");
+        }
+
+        const extension =
+          image.mimeType === "image/png"
+            ? "png"
+            : image.mimeType === "image/webp"
+              ? "webp"
+              : "jpg";
+
+        const uniqueName =
+          `${Date.now()}-${Math.random().toString(36).slice(2)}.${extension}`;
+
+        storagePath = `${currentUserId}/${noteId}/${uniqueName}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from("note-images")
+          .upload(storagePath, fileBuffer, {
+            contentType: image.mimeType,
+            upsert: false,
+          });
+
+        if (uploadError) throw uploadError;
+
+        const { error: metadataError } = await supabase
+          .from("note_attachments")
+          .insert({
+            note_id: noteId,
+            user_id: currentUserId,
+            storage_path: storagePath,
+            file_name: image.fileName,
+            mime_type: image.mimeType,
+            file_size: fileBuffer.byteLength,
+          });
+
+        if (metadataError) {
+          // Roll back the uploaded file if metadata creation fails.
+          await supabase.storage
+            .from("note-images")
+            .remove([storagePath]);
+
+          storagePath = null;
+          throw metadataError;
+        }
+
+        uploadedUris.push(image.uri);
+      } catch (err) {
+        console.error("Attachment upload failed:", err);
+        failures.push(
+          `${image.fileName}: ${
+            err instanceof Error ? err.message : "Upload failed"
+          }`
+        );
+      }
+    }
+
+    setPendingImages((current) =>
+      current.filter((image) => !uploadedUris.includes(image.uri))
+    );
+
+    await loadAttachments(noteId);
+
+    if (failures.length > 0) {
+      Alert.alert(
+        "Some images weren't uploaded",
+        failures.join("\n")
+      );
+    }
+
+    return failures.length === 0;
+  } finally {
+    setUploadingImages(false);
+  }
+};
+
+const deleteAttachment = async (attachment: NoteAttachment) => {
+  Alert.alert(
+    "Remove image?",
+    "This image will be permanently removed from this note.",
+    [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Remove",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            const { error: storageError } = await supabase.storage
+              .from("note-images")
+              .remove([attachment.storage_path]);
+
+            if (storageError) throw storageError;
+
+            const { error: metadataError } = await supabase
+              .from("note_attachments")
+              .delete()
+              .eq("id", attachment.id)
+              .eq("user_id", userId ?? "");
+
+            if (metadataError) {
+              throw metadataError;
+            }
+
+            setAttachments((current) =>
+              current.filter((item) => item.id !== attachment.id)
+            );
+          } catch (err) {
+            console.error("Attachment deletion failed:", err);
+            Alert.alert(
+              "Couldn't remove image",
+              err instanceof Error ? err.message : "Please try again."
+            );
+          }
+        },
+      },
+    ]
+  );
+};
 
   const loadEditor = useCallback(async () => {
     setLoading(true);
@@ -134,6 +414,10 @@ export default function NoteEditor() {
         setNoteDate(note.note_date);
         setPriority(note.priority as Priority);
         setIsPinned(note.is_pinned);
+
+        await loadAttachments(note.id);
+
+
       } else if (initialCourseId) {
         const belongsToUser = availableCourses.some(
           (course) => course.id === initialCourseId
@@ -155,7 +439,7 @@ export default function NoteEditor() {
     } finally {
       setLoading(false);
     }
-  }, [editingId, initialCourseId]);
+  }, [editingId, initialCourseId, loadAttachments]);
 
   useEffect(() => {
     void loadEditor();
@@ -206,25 +490,41 @@ export default function NoteEditor() {
         is_pinned: isPinned,
       };
 
-      if (editingId) {
-        const { error: updateError } = await supabase
-          .from("notes")
-          .update(noteData)
-          .eq("id", editingId)
-          .eq("user_id", userId)
-          .select("id")
-          .single();
+      
+let savedNoteId = editingId;
 
-        if (updateError) throw updateError;
-      } else {
-        const { error: insertError } = await supabase
-          .from("notes")
-          .insert(noteData)
-          .select("id")
-          .single();
+if (editingId) {
+  const { data, error: updateError } = await supabase
+    .from("notes")
+    .update(noteData)
+    .eq("id", editingId)
+    .eq("user_id", userId)
+    .select("id")
+    .single();
 
-        if (insertError) throw insertError;
-      }
+  if (updateError) throw updateError;
+
+  savedNoteId = data.id;
+} else {
+  const { data, error: insertError } = await supabase
+    .from("notes")
+    .insert(noteData)
+    .select("id")
+    .single();
+
+  if (insertError) throw insertError;
+
+  savedNoteId = data.id;
+}
+
+if (!savedNoteId) {
+  throw new Error("Couldn't determine the saved note ID.");
+}
+
+if (pendingImages.length > 0) {
+  await uploadPendingImages(savedNoteId, userId);
+}
+
 
       Alert.alert(
         "Note saved",
@@ -393,6 +693,117 @@ export default function NoteEditor() {
           maxLength={100000}
         />
 
+        {/* Changes made here  */}
+
+<View style={styles.attachmentHeader}>
+  <View style={{ flex: 1 }}>
+    <Text style={styles.label}>IMAGE ATTACHMENTS</Text>
+    <Text style={styles.helper}>
+      Up to 10 images · Maximum 2 MB per image
+    </Text>
+  </View>
+
+  <Pressable
+    onPress={() => void pickImages()}
+    disabled={pickingImages || uploadingImages}
+    style={styles.addImageButton}
+  >
+    <Text style={styles.addImageButtonText}>
+      {pickingImages ? "Opening..." : "+ Add images"}
+    </Text>
+  </Pressable>
+</View>
+
+{pendingImages.length > 0 && (
+  <View style={styles.attachmentSection}>
+    <Text style={styles.attachmentSectionTitle}>
+      Waiting to upload ({pendingImages.length})
+    </Text>
+
+    <View style={styles.imageGrid}>
+      {pendingImages.map((image, index) => (
+        <View
+          key={`${image.uri}-${index}`}
+          style={styles.imageCard}
+        >
+          <Image source={{ uri: image.uri }} style={styles.attachmentImage} />
+
+          <Pressable
+            style={styles.removeImageButton}
+            onPress={() =>
+              setPendingImages((current) =>
+                current.filter((_, itemIndex) => itemIndex !== index)
+              )
+            }
+            accessibilityLabel={`Remove ${image.fileName}`}
+          >
+            <Text style={styles.removeImageText}>×</Text>
+          </Pressable>
+
+          <Text style={styles.imageFileName} numberOfLines={1}>
+            {image.fileName}
+          </Text>
+        </View>
+      ))}
+    </View>
+  </View>
+)}
+
+{attachments.length > 0 && (
+  <View style={styles.attachmentSection}>
+    <Text style={styles.attachmentSectionTitle}>
+      Uploaded images ({attachments.length})
+    </Text>
+
+    <View style={styles.imageGrid}>
+      {attachments.map((attachment) => (
+        <View key={attachment.id} style={styles.imageCard}>
+          {attachment.signedUrl ? (
+            <Pressable
+              onPress={() => {
+                if (attachment.signedUrl) {
+                  setFullScreenImage(attachment.signedUrl);
+                }
+              }}
+            >
+              <Image
+                source={{ uri: attachment.signedUrl }}
+                style={styles.attachmentImage}
+              />
+            </Pressable>
+          ) : (
+            <View style={styles.imagePlaceholder}>
+              <Text style={styles.muted}>Preview unavailable</Text>
+            </View>
+          )}
+
+          <Pressable
+            style={styles.removeImageButton}
+            onPress={() => deleteAttachment(attachment)}
+            accessibilityLabel={`Delete ${attachment.file_name}`}
+          >
+            <Text style={styles.removeImageText}>×</Text>
+          </Pressable>
+
+          <Text style={styles.imageFileName} numberOfLines={1}>
+            {attachment.file_name}
+          </Text>
+        </View>
+      ))}
+    </View>
+  </View>
+)}
+
+{uploadingImages && (
+  <View style={styles.uploadingRow}>
+    <ActivityIndicator color="#A78BFA" />
+    <Text style={styles.helper}>Uploading your images...</Text>
+  </View>
+)}
+
+
+        
+
         <Text style={styles.label}>NOTE DATE</Text>
         <TextInput
           value={noteDate}
@@ -486,6 +897,32 @@ export default function NoteEditor() {
           Your note is saved to your Syllo account.
         </Text>
       </ScrollView>
+
+      <Modal
+      visible={fullScreenImage !== null}
+      transparent
+      animationType="fade"
+      statusBarTranslucent
+      onRequestClose={() => setFullScreenImage(null)}
+    >
+      <View style={styles.fullScreenViewer}>
+        <Pressable
+          style={styles.closeImageViewer}
+          onPress={() => setFullScreenImage(null)}
+        >
+          <Text style={styles.closeImageViewerText}>✕</Text>
+        </Pressable>
+
+        {fullScreenImage && (
+          <Image
+            source={{ uri: fullScreenImage }}
+            style={styles.fullScreenImage}
+            resizeMode="contain"
+          />
+        )}
+      </View>
+    </Modal>
+
     </KeyboardAvoidingView>
   );
 }
@@ -733,4 +1170,133 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: 15,
   },
+
+
+attachmentHeader: {
+  flexDirection: "row",
+  alignItems: "center",
+  gap: 12,
+  marginTop: 24,
+},
+
+addImageButton: {
+  backgroundColor: "#211B35",
+  borderWidth: 1,
+  borderColor: "#6D4ACB",
+  borderRadius: 12,
+  paddingHorizontal: 12,
+  paddingVertical: 10,
+},
+
+addImageButtonText: {
+  color: "#D1C4F7",
+  fontSize: 12,
+  fontWeight: "800",
+},
+
+attachmentSection: {
+  marginTop: 16,
+},
+
+attachmentSectionTitle: {
+  color: "#F5F7FA",
+  fontSize: 13,
+  fontWeight: "700",
+  marginBottom: 10,
+},
+
+imageGrid: {
+  flexDirection: "row",
+  flexWrap: "wrap",
+  gap: 12,
+},
+
+imageCard: {
+  width: "47%",
+  backgroundColor: "#11131A",
+  borderWidth: 1,
+  borderColor: "#292C38",
+  borderRadius: 12,
+  padding: 8,
+  position: "relative",
+},
+
+attachmentImage: {
+  width: "100%",
+  height: 110,
+  borderRadius: 8,
+  backgroundColor: "#20232D",
+},
+
+imagePlaceholder: {
+  height: 110,
+  alignItems: "center",
+  justifyContent: "center",
+  backgroundColor: "#20232D",
+  borderRadius: 8,
+},
+
+removeImageButton: {
+  position: "absolute",
+  top: 12,
+  right: 12,
+  width: 27,
+  height: 27,
+  borderRadius: 14,
+  backgroundColor: "#11131A",
+  alignItems: "center",
+  justifyContent: "center",
+  zIndex: 1,
+},
+
+removeImageText: {
+  color: "#FF8C9B",
+  fontSize: 22,
+  lineHeight: 25,
+  fontWeight: "700",
+},
+
+imageFileName: {
+  color: "#A0A5B1",
+  fontSize: 11,
+  marginTop: 7,
+},
+
+uploadingRow: {
+  flexDirection: "row",
+  alignItems: "center",
+  gap: 10,
+  marginTop: 16,
+},
+
+
+fullScreenViewer: {
+  flex: 1,
+  backgroundColor: "#000000",
+  justifyContent: "center",
+  alignItems: "center",
+},
+fullScreenImage: {
+  width: "100%",
+  height: "100%",
+},
+closeImageViewer: {
+  position: "absolute",
+  top: 48,
+  right: 20,
+  zIndex: 10,
+  width: 44,
+  height: 44,
+  borderRadius: 22,
+  backgroundColor: "#292929",
+  justifyContent: "center",
+  alignItems: "center",
+},
+closeImageViewerText: {
+  color: "#FFFFFF",
+  fontSize: 22,
+  fontWeight: "600",
+},
+
+
 });

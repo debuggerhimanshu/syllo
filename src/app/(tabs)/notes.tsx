@@ -51,6 +51,7 @@ export default function NotesTab() {
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
+  const [selectedDate, setSelectedDate] = useState("");
   const [selectedCourseId, setSelectedCourseId] = useState<string | null>(
     null
   );
@@ -87,6 +88,7 @@ export default function NotesTab() {
             "id, course_id, title, content, note_date, priority, is_pinned, created_at, updated_at"
           )
           .eq("user_id", user.id)
+          .order("note_date", { ascending: false })
           .order("updated_at", { ascending: false }),
       ]);
 
@@ -129,6 +131,7 @@ export default function NotesTab() {
   const visibleNotes = useMemo(() => {
     const query = search.trim().toLowerCase();
 
+
     return notes.filter((note) => {
       const matchesSearch =
         !query ||
@@ -144,16 +147,26 @@ export default function NotesTab() {
         selectedCourseId === null ||
         note.course_id === selectedCourseId;
 
-      return matchesSearch && matchesFilter && matchesCourse;
-    });
-  }, [notes, search, filter, selectedCourseId]);
+      const matchesDate =
+        !selectedDate || note.note_date === selectedDate;
 
-  const openNote = (noteId: string) => {
-    router.push({
-      pathname: "/note-editor",
-      params: { noteId },
+      return (
+        matchesSearch &&
+        matchesFilter &&
+        matchesCourse &&
+        matchesDate
+      );
     });
-  };
+ }, [notes, search, filter, selectedCourseId, selectedDate]);
+
+  
+    const openNote = (noteId: string) => {
+      router.push({
+        pathname: "/note-details",
+        params: { noteId },
+      });
+    };
+
 
   const openNewNote = (courseId?: string) => {
     router.push({
@@ -308,6 +321,24 @@ export default function NotesTab() {
               clearButtonMode="while-editing"
               accessibilityLabel="Search notes"
             />
+
+            <View style={styles.dateFilterRow}>
+              <TextInput
+                value={selectedDate}
+                onChangeText={setSelectedDate}
+                placeholder="Filter by date: YYYY-MM-DD"
+                placeholderTextColor="#777D8A"
+                style={styles.dateFilterInput}
+                maxLength={10}
+                keyboardType="numbers-and-punctuation"
+              />
+
+              {selectedDate.length > 0 && (
+                <Pressable onPress={() => setSelectedDate("")}>
+                  <Text style={styles.clearDateText}>Clear</Text>
+                </Pressable>
+              )}
+            </View>
 
             <Text style={styles.sectionTitle}>Your notebooks</Text>
             {courses.length === 0 ? (
@@ -537,6 +568,32 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     marginTop: 24,
   },
+
+  dateFilterRow: {
+  flexDirection: "row",
+  alignItems: "center",
+  gap: 10,
+  marginTop: 12,
+},
+
+dateFilterInput: {
+  flex: 1,
+  backgroundColor: "#11131A",
+  borderWidth: 1,
+  borderColor: "#292C38",
+  borderRadius: 14,
+  color: "#F5F7FA",
+  fontSize: 13,
+  paddingHorizontal: 15,
+  paddingVertical: 13,
+},
+
+clearDateText: {
+  color: "#A78BFA",
+  fontSize: 13,
+  fontWeight: "700",
+},
+
   sectionTitle: {
     color: "#F5F7FA",
     fontSize: 17,
