@@ -1,6 +1,7 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  AppState,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -11,6 +12,18 @@ import {
 import { router, useFocusEffect } from "expo-router";
 
 import { supabase } from "@/lib/supabase";
+import {
+  configureNotifications,
+  requestReminderPermission,
+  syncClassReminders,
+  DEFAULT_REMINDER_SETTINGS,
+  type ReminderSettings,
+} from "@/lib/notifications";
+
+import {
+  getReminderSettings,
+  saveReminderSettings,
+} from "@/lib/reminder-settings";
 
 type Course = {
   id: string;
@@ -27,6 +40,8 @@ type Class = {
   start_time: string;
   end_time: string;
   room: string | null;
+  valid_from: string | null;
+  valid_until: string | null;
 };
 
 type ScheduleItem = Class & {
@@ -34,12 +49,78 @@ type ScheduleItem = Class & {
 };
 
 export default function ScheduleTab() {
-  const [schedule, setSchedule] = useState<ScheduleItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState("");
+  
+const [schedule, setSchedule] = useState<ScheduleItem[]>([]);
+const [loading, setLoading] = useState(true);
+const [refreshing, setRefreshing] = useState(false);
+const [error, setError] = useState("");
 
-  const fetchSchedule = async (isRefresh = false) => {
+const [reminderSettings, setReminderSettings] =
+  useState<ReminderSettings>(DEFAULT_REMINDER_SETTINGS);
+const [reminderLoading, setReminderLoading] = useState(true);
+const [reminderSaving, setReminderSaving] = useState(false);
+const [reminderStatus, setReminderStatus] = useState("");
+
+
+  const loadReminderPreferences = async () => {
+    try {
+      const saved = await getReminderSettings();
+      setReminderSettings(saved);
+    } catch (err) {
+      console.error("Failed to load reminder settings:", err);
+    } finally {
+      setReminderLoading(false);
+    }
+  };
+
+  const syncReminders = async (
+    items: ScheduleItem[],
+    settings: ReminderSettings,
+  ) => {
+    try {
+      await configureNotifications();
+
+      const result = await syncClassReminders(
+        items
+          .filter(
+            (item): item is ScheduleItem & { course: Course } =>
+              item.course !== null,
+          )
+          
+          .map((item) => ({
+            id: item.id,
+            weekday: item.weekday,
+            start_time: item.start_time,
+            valid_from: item.valid_from,
+            valid_until: item.valid_until,
+            course: {
+              name: item.course.name,
+              code: item.course.code,
+            },
+          })),
+
+        settings,
+      );
+
+      if ("permissionDenied" in result && result.permissionDenied) {
+        setReminderStatus("Allow notifications to receive class reminders.");
+      } else {
+        setReminderStatus(
+          settings.enabled
+            ? `${result.scheduled} class reminder(s) scheduled`
+            : "Class reminders are turned off",
+        );
+      }
+    } catch (err) {
+      console.error("Failed to sync class reminders:", err);
+      setReminderStatus("Couldn't update reminders. Please try again.");
+    }
+  };
+
+  const fetchSchedule = async (
+  isRefresh = false,
+  settingsToUse?: ReminderSettings,
+) => {
     try {
       if (isRefresh) {
         setRefreshing(true);
@@ -49,25 +130,29 @@ export default function ScheduleTab() {
 
       setError("");
 
-      const { data, error } = await supabase
-        .from("classes")
-        .select(`
+      
+    const { data, error } = await supabase
+      .from("classes")
+      .select(`
+        id,
+        course_id,
+        weekday,
+        start_time,
+        end_time,
+        room,
+        valid_from,
+        valid_until,
+        courses (
           id,
-          course_id,
-          weekday,
-          start_time,
-          end_time,
-          room,
-          courses (
-            id,
-            name,
-            code,
-            faculty,
-            color
-          )
-        `)
-        .order("weekday", { ascending: true })
-        .order("start_time", { ascending: true });
+          name,
+          code,
+          faculty,
+          color
+        )
+      `)
+      .order("weekday", { ascending: true })
+      .order("start_time", { ascending: true });
+
 
       if (error) {
         console.error("Schedule fetch error:", error);
@@ -81,19 +166,28 @@ export default function ScheduleTab() {
             ? item.courses[0] ?? null
             : item.courses ?? null;
 
-          return {
-            id: item.id,
-            course_id: item.course_id,
-            weekday: item.weekday,
-            start_time: item.start_time,
-            end_time: item.end_time,
-            room: item.room,
-            course,
-          };
+          
+        return {
+          id: item.id,
+          course_id: item.course_id,
+          weekday: item.weekday,
+          start_time: item.start_time,
+          end_time: item.end_time,
+          room: item.room,
+          valid_from: item.valid_from,
+          valid_until: item.valid_until,
+          course,
+        };
+
         }
       );
 
       setSchedule(formattedData);
+
+      await syncReminders(
+        formattedData,
+        settingsToUse ?? reminderSettings,
+      );
 
       console.log("Schedule loaded:", formattedData);
     } catch (err) {
@@ -108,11 +202,42 @@ export default function ScheduleTab() {
   /*
    * Fetch every time the Schedule tab becomes active.
    */
-  useFocusEffect(
-    useCallback(() => {
-      fetchSchedule();
-    }, [])
-  );
+  
+  
+useFocusEffect(
+  useCallback(() => {
+    let active = true;
+
+    const initializeSchedule = async () => {
+      setReminderLoading(true);
+
+      try {
+        const savedSettings = await getReminderSettings();
+
+        if (!active) return;
+
+        setReminderSettings(savedSettings);
+        setReminderLoading(false);
+
+        await fetchSchedule(false, savedSettings);
+      } catch (err) {
+        console.error("Failed to initialize schedule:", err);
+
+        if (active) {
+          setReminderLoading(false);
+        }
+      }
+    };
+
+    void initializeSchedule();
+
+    return () => {
+      active = false;
+    };
+  }, [])
+);
+
+
 
   const handleRefresh = () => {
     fetchSchedule(true);
@@ -131,6 +256,70 @@ export default function ScheduleTab() {
 
     return days[weekday - 1] ?? "Unknown";
   };
+
+
+  const updateReminderSettings = async (
+    nextSettings: ReminderSettings,
+  ) => {
+    if (reminderSaving) return;
+
+    setReminderSaving(true);
+    setReminderStatus("");
+
+    try {
+      if (nextSettings.enabled) {
+        await configureNotifications();
+        const permitted = await requestReminderPermission();
+
+        if (!permitted) {
+          setReminderStatus(
+            "Notifications are blocked. Allow them in your phone settings.",
+          );
+          return;
+        }
+      }
+
+      await saveReminderSettings(nextSettings);
+      setReminderSettings(nextSettings);
+
+      await syncReminders(schedule, nextSettings);
+    } catch (err) {
+      console.error("Failed to update reminder settings:", err);
+      setReminderStatus("Couldn't save reminder settings. Please try again.");
+    } finally {
+      setReminderSaving(false);
+    }
+  };
+
+
+
+useEffect(() => {
+  let isRefreshing = false;
+
+  const subscription = AppState.addEventListener(
+    "change",
+    async (nextState) => {
+      if (nextState !== "active" || isRefreshing) return;
+
+      isRefreshing = true;
+
+      try {
+        const savedSettings = await getReminderSettings();
+        setReminderSettings(savedSettings);
+        await fetchSchedule(false, savedSettings);
+      } catch (err) {
+        console.error("Failed to refresh reminders:", err);
+      } finally {
+        isRefreshing = false;
+      }
+    },
+  );
+
+  return () => subscription.remove();
+}, []);
+
+
+
 
   if (loading) {
     return (
@@ -206,8 +395,84 @@ export default function ScheduleTab() {
           </Text>
         </TouchableOpacity> 
 
-        
+      
+<View style={styles.reminderCard}>
+  <View style={styles.reminderHeader}>
+    <View style={{ flex: 1 }}>
+      <Text style={styles.reminderTitle}>Class reminders</Text>
+      <Text style={styles.reminderDescription}>
+        Get notified before your classes
+      </Text>
+    </View>
 
+    <TouchableOpacity
+      activeOpacity={0.8}
+      disabled={reminderSaving || reminderLoading}
+      onPress={() =>
+        void updateReminderSettings({
+          ...reminderSettings,
+          enabled: !reminderSettings.enabled,
+        })
+      }
+      style={[
+        styles.reminderToggle,
+        reminderSettings.enabled && styles.reminderToggleActive,
+      ]}
+    >
+      <Text style={styles.reminderToggleText}>
+        {reminderSettings.enabled ? "ON" : "OFF"}
+      </Text>
+    </TouchableOpacity>
+  </View>
+
+  <Text style={styles.reminderLabel}>Remind me before class</Text>
+
+  <View style={styles.reminderOptions}>
+    {[5, 10, 15, 30].map((minutes) => (
+      <TouchableOpacity
+        key={minutes}
+        activeOpacity={0.8}
+        disabled={
+          reminderSaving ||
+          reminderLoading ||
+          !reminderSettings.enabled
+        }
+        onPress={() =>
+          void updateReminderSettings({
+            ...reminderSettings,
+            minutesBefore: minutes,
+          })
+        }
+        style={[
+          styles.reminderOption,
+          reminderSettings.minutesBefore === minutes &&
+            styles.reminderOptionActive,
+          !reminderSettings.enabled && styles.reminderOptionDisabled,
+        ]}
+      >
+        <Text
+          style={[
+            styles.reminderOptionText,
+            reminderSettings.minutesBefore === minutes &&
+              styles.reminderOptionTextActive,
+          ]}
+        >
+          {minutes} min
+        </Text>
+      </TouchableOpacity>
+    ))}
+  </View>
+
+  {!!reminderStatus && (
+    <Text style={styles.reminderStatus}>{reminderStatus}</Text>
+  )}
+
+  {reminderSaving && (
+    <Text style={styles.reminderStatus}>Updating reminders...</Text>
+  )}
+</View>
+  
+      
       {/* Schedule */}
       {schedule.length === 0 ? (
         <View style={styles.emptyCard}>
@@ -431,4 +696,86 @@ importButtonText: {
     fontSize: 13,
     marginTop: 8,
   },
+
+  
+reminderCard: {
+  backgroundColor: "#111318",
+  borderWidth: 1,
+  borderColor: "#29233D",
+  borderRadius: 18,
+  padding: 18,
+  marginBottom: 22,
+},
+reminderHeader: {
+  flexDirection: "row",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 12,
+},
+reminderTitle: {
+  color: "#F5F7FA",
+  fontSize: 16,
+  fontWeight: "700",
+},
+reminderDescription: {
+  color: "#777D8A",
+  fontSize: 12,
+  marginTop: 5,
+},
+reminderToggle: {
+  paddingHorizontal: 15,
+  paddingVertical: 9,
+  borderRadius: 10,
+  backgroundColor: "#252832",
+},
+reminderToggleActive: {
+  backgroundColor: "#6D42D8",
+},
+reminderToggleText: {
+  color: "#FFFFFF",
+  fontSize: 12,
+  fontWeight: "800",
+},
+reminderLabel: {
+  color: "#9CA3AF",
+  fontSize: 12,
+  marginTop: 22,
+  marginBottom: 12,
+},
+reminderOptions: {
+  flexDirection: "row",
+  gap: 8,
+},
+reminderOption: {
+  flex: 1,
+  alignItems: "center",
+  paddingVertical: 11,
+  borderRadius: 10,
+  backgroundColor: "#1A1C24",
+  borderWidth: 1,
+  borderColor: "#292D38",
+},
+reminderOptionActive: {
+  backgroundColor: "#29203F",
+  borderColor: "#8B5CF6",
+},
+reminderOptionDisabled: {
+  opacity: 0.45,
+},
+reminderOptionText: {
+  color: "#A1A6B3",
+  fontSize: 12,
+  fontWeight: "600",
+},
+reminderOptionTextActive: {
+  color: "#C4B5FD",
+},
+reminderStatus: {
+  color: "#A78BFA",
+  fontSize: 12,
+  marginTop: 14,
+  lineHeight: 18,
+},
+
+
 });

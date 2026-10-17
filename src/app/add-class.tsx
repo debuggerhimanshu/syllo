@@ -406,11 +406,13 @@ export default function AddClassScreen() {
         return;
       }
 
+      
       // -----------------------------------------------
-      // SUCCESS
+      // SUCCESS — refresh class reminders
       // -----------------------------------------------
 
       router.back();
+
     } catch (err) {
       console.error(
         "Unexpected save class error:",

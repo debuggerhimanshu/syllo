@@ -1,3 +1,4 @@
+import { router } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -658,6 +659,18 @@ const pendingClasses = course.classes.filter((item) => {
                   Review again
                 </Text>
               </TouchableOpacity>
+
+              {importComplete && (
+              <TouchableOpacity
+                style={styles.primaryButton}
+                onPress={() => router.replace("/(tabs)/schedule")}
+              >
+                <Text style={styles.primaryButtonText}>
+                  Back to Schedule
+                </Text>
+              </TouchableOpacity>
+            )}
+
             </View>
           )}
         </View>
