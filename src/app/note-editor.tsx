@@ -19,6 +19,7 @@ import {
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { supabase } from "@/lib/supabase";
 
+
 type Course = {
   id: string;
   name: string;
@@ -97,6 +98,52 @@ export default function NoteEditor() {
   const [noteDate, setNoteDate] = useState(today());
   const [priority, setPriority] = useState<Priority>("medium");
   const [isPinned, setIsPinned] = useState(false);
+  
+const [originalSnapshot, setOriginalSnapshot] = useState<string | null>(null);
+
+
+
+const hasUnsavedChanges = () => {
+  if (originalSnapshot === null) {
+    return (
+      title.trim() !== "" ||
+      content.trim() !== "" ||
+      pendingImages.length > 0
+    );
+  }
+
+  const currentSnapshot = JSON.stringify({
+    courseId: selectedCourseId,
+    title,
+    content,
+    noteDate,
+    priority,
+    isPinned,
+  });
+
+  return currentSnapshot !== originalSnapshot;
+};
+
+const handleBack = () => {
+  if (!hasUnsavedChanges()) {
+    router.back();
+    return;
+  }
+
+  Alert.alert(
+    "Discard unsaved changes?",
+    "Your changes haven't been saved yet.",
+    [
+      { text: "Keep editing", style: "cancel" },
+      {
+        text: "Discard changes",
+        style: "destructive",
+        onPress: () => router.back(),
+      },
+    ]
+  );
+};
+
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -416,20 +463,44 @@ const deleteAttachment = async (attachment: NoteAttachment) => {
         setPriority(note.priority as Priority);
         setIsPinned(note.is_pinned);
 
+        setOriginalSnapshot(
+          JSON.stringify({
+            courseId: note.course_id ?? "",
+            title: note.title ?? "",
+            content: note.content ?? "",
+            noteDate: note.note_date,
+            priority: note.priority as Priority,
+            isPinned: note.is_pinned,
+          })
+        );
+
         await loadAttachments(note.id);
 
 
-      } else if (initialCourseId) {
-        const belongsToUser = availableCourses.some(
-          (course) => course.id === initialCourseId
-        );
+      } else {
+  const startingCourseId = initialCourseId
+    ? availableCourses.some((course) => course.id === initialCourseId)
+      ? initialCourseId
+      : ""
+    : "";
 
-        if (!belongsToUser) {
-          throw new Error("The selected course is not available.");
-        }
+  if (initialCourseId && !startingCourseId) {
+    throw new Error("The selected course is not available.");
+  }
 
-        setSelectedCourseId(initialCourseId);
-      }
+  setSelectedCourseId(startingCourseId);
+
+  setOriginalSnapshot(
+    JSON.stringify({
+      courseId: startingCourseId,
+      title: "",
+      content: "",
+      noteDate,
+      priority: "medium",
+      isPinned: false,
+    })
+  );
+}
     } catch (err) {
       console.error("Failed to load note editor:", err);
       setError(
@@ -523,7 +594,18 @@ if (!savedNoteId) {
 }
 
 if (pendingImages.length > 0) {
-  await uploadPendingImages(savedNoteId, userId);
+  const allImagesUploaded = await uploadPendingImages(
+    savedNoteId,
+    userId
+  );
+
+  if (!allImagesUploaded) {
+    Alert.alert(
+      "Note saved with image errors",
+      "Your note text was saved, but some images could not be uploaded. Please retry those images."
+    );
+    return;
+  }
 }
 
 
@@ -588,7 +670,7 @@ if (pendingImages.length > 0) {
       >
         <View style={styles.header}>
           <Pressable
-            onPress={() => router.back()}
+            onPress={handleBack}
             style={styles.backButton}
             accessibilityLabel="Go back"
           >
@@ -928,22 +1010,30 @@ if (pendingImages.length > 0) {
           />
         </View>
 
-        <Pressable
-          onPress={() => void saveNote()}
-          disabled={saving || courses.length === 0}
-          style={[
-            styles.saveButton,
-            (saving || courses.length === 0) && styles.disabledButton,
-          ]}
-        >
-          {saving ? (
-            <ActivityIndicator color="#FFFFFF" />
-          ) : (
-            <Text style={styles.saveButtonText}>
-              {editingId ? "Save changes" : "Save note"}
-            </Text>
-          )}
-        </Pressable>
+        
+<Pressable
+  onPress={() => void saveNote()}
+  disabled={saving || uploadingImages || courses.length === 0}
+  style={[
+    styles.saveButton,
+    (saving || uploadingImages || courses.length === 0) &&
+      styles.disabledButton,
+  ]}
+>
+  {saving || uploadingImages ? (
+    <View style={styles.savingRow}>
+      <ActivityIndicator color="#FFFFFF" />
+      <Text style={styles.saveButtonText}>
+        {uploadingImages ? "Uploading images..." : "Saving note..."}
+      </Text>
+    </View>
+  ) : (
+    <Text style={styles.saveButtonText}>
+      {editingId ? "Save changes" : "Save note"}
+    </Text>
+  )}
+</Pressable>
+
 
         <Text style={styles.footerText}>
           Your note is saved to your Syllo account.
@@ -1404,6 +1494,13 @@ courseDropdownOption: {
   borderColor: "transparent",
   borderRadius: 11,
   padding: 12,
+},
+
+savingRow: {
+  flexDirection: "row",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 10,
 },
 
 

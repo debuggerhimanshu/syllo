@@ -3,6 +3,7 @@ import { useEffect,useRef, useState } from "react";
 import {
   ActivityIndicator,
   Animated,
+  Alert,
   Image,
   Modal,
   Pressable,
@@ -147,6 +148,8 @@ useEffect(() => {
     );
 
     
+
+    
     setAttachments(loadedAttachments);
 } catch (err) {
     console.error("Failed to load note details:", err);
@@ -157,6 +160,89 @@ useEffect(() => {
     setLoading(false);
 }
 };
+
+const handleDeleteNote = () => {
+  if (!note) return;
+
+  Alert.alert(
+    "Delete note?",
+    "This note and all its attached images will be permanently deleted. This action cannot be undone.",
+    [
+      {
+        text: "Cancel",
+        style: "cancel",
+      },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            setLoading(true);
+            setError("");
+
+            const {
+              data: { user },
+              error: authError,
+            } = await supabase.auth.getUser();
+
+            if (authError) throw authError;
+            if (!user) throw new Error("Please sign in again.");
+
+            const { data: attachmentData, error: attachmentError } =
+              await supabase
+                .from("note_attachments")
+                .select("id, storage_path")
+                .eq("note_id", note.id)
+                .eq("user_id", user.id);
+
+            if (attachmentError) throw attachmentError;
+
+            const attachmentPaths = (attachmentData ?? []).map(
+              (attachment) => attachment.storage_path
+            );
+
+            // Delete the note first. The database cascade removes
+            // its attachment records.
+            const { error: deleteError } = await supabase
+              .from("notes")
+              .delete()
+              .eq("id", note.id)
+              .eq("user_id", user.id);
+
+            if (deleteError) throw deleteError;
+
+            // Then remove the image files from private storage.
+            if (attachmentPaths.length > 0) {
+              const { error: storageError } = await supabase.storage
+                .from("note-images")
+                .remove(attachmentPaths);
+
+              if (storageError) {
+                console.error(
+                  "Note deleted, but some image files may remain:",
+                  storageError
+                );
+              }
+            }
+
+            Alert.alert("Note deleted", "Your note has been deleted.");
+            router.replace("/(tabs)/notes");
+          } catch (err) {
+            console.error("Failed to delete note:", err);
+            setError(
+              err instanceof Error
+                ? err.message
+                : "Couldn't delete this note. Please try again."
+            );
+          } finally {
+            setLoading(false);
+          }
+        },
+      },
+    ]
+  );
+};
+
 useEffect(() => {
 void loadNoteDetails();
 }, [noteId]);
@@ -311,21 +397,30 @@ void loadNoteDetails();
       </ScrollView>
 
 
-      {!loading && !error && note && (
-        <View style={styles.bottomBar}>
-          <Pressable
-            style={styles.editButton}
-            onPress={() =>
-              router.push({
-                pathname: "/note-editor",
-                params: { noteId: note.id },
-              })
-            }
-          >
-            <Text style={styles.editButtonText}>✎  Edit Note</Text>
-          </Pressable>
-        </View>
-      )}
+      
+{!loading && !error && note && (
+  <View style={styles.bottomBar}>
+    <Pressable
+      style={styles.deleteButton}
+      onPress={handleDeleteNote}
+    >
+      <Text style={styles.deleteButtonText}>Delete Note</Text>
+    </Pressable>
+
+    <Pressable
+      style={styles.editButton}
+      onPress={() =>
+        router.push({
+          pathname: "/note-editor",
+          params: { noteId: note.id },
+        })
+      }
+    >
+      <Text style={styles.editButtonText}>✎  Edit Note</Text>
+    </Pressable>
+  </View>
+)}
+
 
 
 <Modal
@@ -599,6 +694,22 @@ stickyHeader: {
   left: 22,
   zIndex: 20,
   elevation: 20,
+},
+
+
+deleteButton: {
+  backgroundColor: "#24151A",
+  borderColor: "#743343",
+  borderWidth: 1,
+  borderRadius: 14,
+  paddingVertical: 14,
+  alignItems: "center",
+},
+
+deleteButtonText: {
+  color: "#FF8193",
+  fontSize: 15,
+  fontWeight: "700",
 },
 
 });
