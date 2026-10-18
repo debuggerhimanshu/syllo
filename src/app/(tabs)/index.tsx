@@ -15,6 +15,12 @@ import {
 import { Redirect, router, useFocusEffect } from "expo-router";
 import { useAuth } from "@/context/AuthContext";
 import { supabase } from "@/lib/supabase";
+import {
+  getClassAlarmSettings,
+  saveClassAlarmSettings,
+  type ClassAlarmSettings,
+} from "@/lib/alarm-settings";
+import { syncClassAlarms } from "@/lib/class-alarms";
 
 type Course = {
   id: string;
@@ -93,6 +99,8 @@ export default function HomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
+  const [alarmSettings, setAlarmSettings] = useState<ClassAlarmSettings>({});
+  const [savingAlarmId, setSavingAlarmId] = useState<string | null>(null);
 
   const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
@@ -158,6 +166,106 @@ export default function HomeScreen() {
       setRefreshing(false);
     }
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+
+      getClassAlarmSettings()
+        .then((settings) => {
+          if (active) setAlarmSettings(settings);
+        })
+        .catch((error) => {
+          console.error("Failed to load class alarm settings:", error);
+        });
+
+      return () => {
+        active = false;
+      };
+    }, [])
+  );
+
+  
+const toggleClassAlarm = useCallback(async (classId: string) => {
+  if (savingAlarmId) return;
+
+  const previous = alarmSettings;
+  const next: ClassAlarmSettings = {
+    ...previous,
+    [classId]: !(previous[classId] ?? false),
+  };
+
+  setAlarmSettings(next);
+  setSavingAlarmId(classId);
+
+  try {
+    await saveClassAlarmSettings(next);
+
+    const { data, error } = await supabase
+      .from("classes")
+      .select(`
+        id,
+        weekday,
+        start_time,
+        valid_from,
+        valid_until,
+        courses (
+          name,
+          code
+        )
+      `);
+
+    if (error) throw error;
+
+    const alarmClasses = (data ?? []).map((item: any) => {
+      const course = Array.isArray(item.courses)
+        ? item.courses[0] ?? null
+        : item.courses ?? null;
+
+      return {
+        id: item.id,
+        weekday: item.weekday,
+        start_time: item.start_time,
+        valid_from: item.valid_from,
+        valid_until: item.valid_until,
+        course,
+      };
+    });
+
+    const result = await syncClassAlarms(alarmClasses, next);
+
+    if (result.permissionDenied && next[classId]) {
+      Alert.alert(
+        "Notifications disabled",
+        "Enable notifications for Syllo in Android Settings to receive class alarms.",
+      );
+    } else {
+      Alert.alert(
+        next[classId] ? "Alarm enabled" : "Alarm disabled",
+        next[classId]
+          ? "Your class alarm is scheduled for 5 minutes before class."
+          : "The alarm setting has been updated.",
+      );
+    }
+  } catch (error) {
+    console.error("Failed to update class alarm:", error);
+
+    try {
+      await saveClassAlarmSettings(previous);
+    } catch (saveError) {
+      console.error("Failed to restore alarm settings:", saveError);
+    }
+
+    setAlarmSettings(previous);
+    Alert.alert(
+      "Couldn't update alarm",
+      "Please check your connection and try again.",
+    );
+  } finally {
+    setSavingAlarmId(null);
+  }
+}, [alarmSettings, savingAlarmId]);
+
 
   useFocusEffect(
     useCallback(() => {
@@ -228,6 +336,9 @@ export default function HomeScreen() {
         onRefresh={() => fetchClasses(true)}
         onRetry={() => fetchClasses()}
         onSignOut={handleSignOut}
+        alarmSettings={alarmSettings}
+        savingAlarmId={savingAlarmId}
+        onToggleAlarm={toggleClassAlarm}
       />
     </SafeAreaView>
   );
@@ -244,6 +355,9 @@ function ScrollContent({
   onRefresh,
   onRetry,
   onSignOut,
+  alarmSettings,
+  savingAlarmId,
+  onToggleAlarm,
 }: {
   fetching: boolean;
   refreshing: boolean;
@@ -255,6 +369,9 @@ function ScrollContent({
   onRefresh: () => void;
   onRetry: () => void;
   onSignOut: () => void;
+  alarmSettings: ClassAlarmSettings;
+  savingAlarmId: string | null;
+  onToggleAlarm: (classId: string) => void;
 }) {
   return (
     <View style={styles.screen}>
@@ -474,7 +591,16 @@ function ScrollContent({
                   ]}
                 />
 
-                <View style={styles.classInfo}>
+                <TouchableOpacity
+                  style={styles.classInfo}
+                  onPress={() =>
+                    router.push({
+                      pathname: "/class-details",
+                      params: { id: item.id },
+                    })
+                  }
+                  activeOpacity={0.75}
+                >
                   <Text style={styles.className} numberOfLines={1}>
                     {item.course?.name ?? "Untitled course"}
                   </Text>
@@ -482,9 +608,35 @@ function ScrollContent({
                     {item.course?.code ?? "Course"}
                     {item.room ? ` · ${item.room}` : ""}
                   </Text>
-                </View>
+                </TouchableOpacity>
 
-                <Text style={styles.classArrow}>›</Text>
+                <TouchableOpacity
+                  style={[
+                    styles.alarmToggle,
+                    alarmSettings[item.id] && styles.alarmToggleActive,
+                  ]}
+                  onPress={() => onToggleAlarm(item.id)}
+                  disabled={savingAlarmId === item.id}
+                  accessibilityRole="switch"
+                  accessibilityState={{
+                    checked: alarmSettings[item.id] ?? false,
+                    disabled: savingAlarmId === item.id,
+                  }}
+                  accessibilityLabel={`Alarm for ${item.course?.name ?? "class"}`}
+                >
+                  <Text
+                    style={[
+                      styles.alarmToggleText,
+                      alarmSettings[item.id] && styles.alarmToggleTextActive,
+                    ]}
+                  >
+                    {savingAlarmId === item.id
+                      ? "..."
+                      : alarmSettings[item.id]
+                        ? "ALARM ON"
+                        : "ALARM OFF"}
+                  </Text>
+                </TouchableOpacity>
               </TouchableOpacity>
             ))}
           </View>
@@ -889,6 +1041,28 @@ const styles = StyleSheet.create({
     color: COLORS.muted,
     fontSize: 10,
     marginTop: 6,
+  },
+  alarmToggle: {
+    marginLeft: 8,
+    paddingHorizontal: 9,
+    paddingVertical: 9,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.cardLight,
+  },
+  alarmToggleActive: {
+    borderColor: "#6D4BC3",
+    backgroundColor: "#211A35",
+  },
+  alarmToggleText: {
+    color: COLORS.muted,
+    fontSize: 9,
+    fontWeight: "800",
+    letterSpacing: 0.3,
+  },
+  alarmToggleTextActive: {
+    color: "#C4B5FD",
   },
   classArrow: {
     color: COLORS.muted,

@@ -25,6 +25,9 @@ import {
   saveReminderSettings,
 } from "@/lib/reminder-settings";
 
+import { syncClassAlarms } from "@/lib/class-alarms";
+import { getClassAlarmSettings } from "@/lib/alarm-settings";
+
 type Course = {
   id: string;
   name: string;
@@ -182,12 +185,35 @@ const [reminderStatus, setReminderStatus] = useState("");
         }
       );
 
+      
       setSchedule(formattedData);
 
       await syncReminders(
         formattedData,
         settingsToUse ?? reminderSettings,
       );
+
+      const classAlarmSettings = await getClassAlarmSettings();
+
+      const alarmResult = await syncClassAlarms(
+        formattedData.map((item) => ({
+          id: item.id,
+          weekday: item.weekday,
+          start_time: item.start_time,
+          valid_from: item.valid_from,
+          valid_until: item.valid_until,
+          course: item.course
+            ? {
+                name: item.course.name,
+                code: item.course.code,
+              }
+            : null,
+        })),
+        classAlarmSettings,
+      );
+
+      console.log("Class alarms scheduled:", alarmResult.scheduled);
+
 
       console.log("Schedule loaded:", formattedData);
     } catch (err) {

@@ -1,0 +1,35 @@
+
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+  <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+  <uses-permission android:name="android.permission.VIBRATE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+  <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+
+  <application>
+
+    <receiver
+      android:name="com.zodiacdeveloper.sylloalarm.AlarmReceiver"
+      android:enabled="true"
+      android:exported="false" />
+
+    <service
+      android:name="com.zodiacdeveloper.sylloalarm.AlarmRingingService"
+      android:enabled="true"
+      android:exported="false"
+      android:foregroundServiceType="mediaPlayback" />
+
+    <activity
+      android:name="com.zodiacdeveloper.sylloalarm.AlarmActivity"
+      android:excludeFromRecents="true"
+      android:exported="false"
+      android:launchMode="singleTop"
+      android:showWhenLocked="true"
+      android:turnScreenOn="true"
+      android:theme="@android:style/Theme.Material.NoActionBar"
+      android:screenOrientation="portrait" />
+
+  </application>
+
+</manifest>
