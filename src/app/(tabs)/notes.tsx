@@ -676,11 +676,11 @@ clearDateText: {
 },
 
   sectionTitle: {
-    color: "#F5F7FA",
-    fontSize: 17,
-
-    fontWeight: "700",
-  },
+  color: "#F5F7FA",
+  fontSize: 17,
+  fontWeight: "700",
+  marginTop: 12,
+},  
   courseRow: {
     gap: 9,
     paddingVertical: 14,

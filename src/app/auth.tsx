@@ -4,12 +4,14 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
+
 
 import { router } from "expo-router";
 import { makeRedirectUri } from "expo-auth-session";
@@ -109,9 +111,15 @@ export default function AuthScreen() {
 
   return (
     <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
+  style={styles.container}
+  behavior={Platform.OS === "ios" ? "padding" : "height"}
+  keyboardVerticalOffset={Platform.OS === "ios" ? 20 : 0}
+>
+  <ScrollView
+    contentContainerStyle={styles.scrollContent}
+    keyboardShouldPersistTaps="handled"
+    showsVerticalScrollIndicator={false}
+  >
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.logo}>SYLLO</Text>
@@ -267,6 +275,7 @@ export default function AuthScreen() {
           .
         </Text>
       </View>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }
@@ -277,6 +286,10 @@ const styles = StyleSheet.create({
     backgroundColor: "#08090D",
     paddingHorizontal: 28,
   },
+
+  scrollContent: {
+  flexGrow: 1,
+},
 
   header: {
     paddingTop: 65,

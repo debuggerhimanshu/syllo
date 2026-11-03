@@ -9,6 +9,7 @@ import {
   StatusBar,
   StyleSheet,
   Text,
+  Modal,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -40,6 +41,8 @@ type ClassItem = {
   room: string | null;
   course: Course | null;
 };
+
+
 
 const COLORS = {
   background: "#08090D",
@@ -314,6 +317,7 @@ const toggleClassAlarm = useCallback(async (classId: string) => {
         remainingClasses={remainingClasses}
         onRefresh={() => fetchClasses(true)}
         onRetry={() => fetchClasses()}
+        accountEmail={session.user.email ?? ""}
         onSignOut={handleSignOut}
         alarmSettings={alarmSettings}
         savingAlarmId={savingAlarmId}
@@ -333,6 +337,7 @@ function ScrollContent({
   remainingClasses,
   onRefresh,
   onRetry,
+  accountEmail,
   onSignOut,
   alarmSettings,
   savingAlarmId,
@@ -341,6 +346,7 @@ function ScrollContent({
   fetching: boolean;
   refreshing: boolean;
   error: string | null;
+  accountEmail: string;
   classes: ClassItem[];
   currentClass: ClassItem | null;
   featuredClass: ClassItem | null;
@@ -352,9 +358,10 @@ function ScrollContent({
   savingAlarmId: string | null;
   onToggleAlarm: (classId: string) => void;
 }) {
-
+const [profileMenuVisible, setProfileMenuVisible] = useState(false);
   return (
-    <View style={styles.screen}>
+    <View style={styles.screen}
+    >
       <ScrollView
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
@@ -378,9 +385,9 @@ function ScrollContent({
 
           <TouchableOpacity
             style={styles.avatar}
-            onPress={onSignOut}
+            onPress={() => setProfileMenuVisible(true)}
             accessibilityRole="button"
-            accessibilityLabel="Sign out"
+            accessibilityLabel="Open profile menu"
           >
             <Text style={styles.avatarText}>S</Text>
           </TouchableOpacity>
@@ -667,6 +674,90 @@ function ScrollContent({
         </View>
 
         <Text style={styles.footer}>MADE FOR YOUR NEXT BIG THING ✦</Text>
+
+        <Modal
+  visible={profileMenuVisible}
+  transparent
+  animationType="fade"
+  onRequestClose={() => setProfileMenuVisible(false)}
+>
+  <TouchableOpacity
+    style={styles.modalOverlay}
+    activeOpacity={1}
+    onPress={() => setProfileMenuVisible(false)}
+  >
+    <TouchableOpacity
+      activeOpacity={1}
+      style={styles.profileMenu}
+      onPress={() => {}}
+    >
+      <View style={styles.profileHeader}>
+        <View style={styles.profileAvatar}>
+          <Text style={styles.profileAvatarText}>S</Text>
+        </View>
+
+        <View style={styles.profileInfo}>
+          <Text style={styles.profileName}>Syllo Account</Text>
+          <Text style={styles.profileEmail} numberOfLines={1}>
+            {accountEmail}
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.menuDivider} />
+
+      <TouchableOpacity
+        style={styles.menuItem}
+        onPress={() => {
+          setProfileMenuVisible(false);
+          Alert.alert(
+            "Profile",
+            `Signed in as:\n${accountEmail}`
+          );
+        }}
+      >
+        <Text style={styles.menuIcon}>◉</Text>
+        <Text style={styles.menuItemText}>Profile details</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={styles.menuItem}
+        onPress={() => {
+          setProfileMenuVisible(false);
+          Alert.alert("Settings", "Settings will be available here soon.");
+        }}
+      >
+        <Text style={styles.menuIcon}>⚙</Text>
+        <Text style={styles.menuItemText}>Settings</Text>
+      </TouchableOpacity>
+
+      <View style={styles.menuDivider} />
+
+      <TouchableOpacity
+        style={styles.menuItem}
+        onPress={() => {
+          setProfileMenuVisible(false);
+          Alert.alert(
+            "Sign out",
+            "Are you sure you want to sign out?",
+            [
+              { text: "Cancel", style: "cancel" },
+              {
+                text: "Sign out",
+                style: "destructive",
+                onPress: onSignOut,
+              },
+            ]
+          );
+        }}
+      >
+        <Text style={styles.logoutIcon}>↪</Text>
+        <Text style={styles.logoutText}>Sign out</Text>
+      </TouchableOpacity>
+    </TouchableOpacity>
+  </TouchableOpacity>
+</Modal>
+
       </ScrollView>
     </View>
   );
@@ -935,7 +1026,7 @@ const styles = StyleSheet.create({
     marginBottom: 18,
   },
   emptyIconText: {
-    color: "#C4B5FD",
+    color: "#857ca6",
     fontSize: 25,
   },
   primaryButton: {
@@ -1118,4 +1209,100 @@ const styles = StyleSheet.create({
     letterSpacing: 1.5,
     marginTop: 32,
   },
+modalOverlay: {
+  flex: 1,
+  backgroundColor: "rgba(0,0,0,0.65)",
+  justifyContent: "flex-start",
+  alignItems: "flex-end",
+  paddingTop: 75,
+  paddingRight: 20,
+},
+
+profileMenu: {
+  width: 280,
+  backgroundColor: "#151720",
+  borderRadius: 18,
+  borderWidth: 1,
+  borderColor: "#303342",
+  padding: 16,
+},
+
+profileHeader: {
+  flexDirection: "row",
+  alignItems: "center",
+  gap: 12,
+},
+
+profileAvatar: {
+  width: 44,
+  height: 44,
+  borderRadius: 15,
+  backgroundColor: "#211A35",
+  borderWidth: 1,
+  borderColor: "#4A3476",
+  alignItems: "center",
+  justifyContent: "center",
+},
+
+profileAvatarText: {
+  color: "#C4B5FD",
+  fontSize: 19,
+  fontWeight: "800",
+},
+
+profileInfo: {
+  flex: 1,
+},
+
+profileName: {
+  color: "#F5F7FA",
+  fontSize: 14,
+  fontWeight: "700",
+},
+
+profileEmail: {
+  color: "#8F95A3",
+  fontSize: 11,
+  marginTop: 5,
+},
+
+menuDivider: {
+  height: 1,
+  backgroundColor: "#292C38",
+  marginVertical: 14,
+},
+
+menuItem: {
+  flexDirection: "row",
+  alignItems: "center",
+  paddingVertical: 12,
+  gap: 13,
+},
+
+menuIcon: {
+  color: "#B7A0FF",
+  fontSize: 19,
+  width: 22,
+  textAlign: "center",
+},
+
+menuItemText: {
+  color: "#E5E7EB",
+  fontSize: 13,
+  fontWeight: "600",
+},
+
+logoutIcon: {
+  color: "#F87171",
+  fontSize: 20,
+  width: 22,
+  textAlign: "center",
+},
+
+logoutText: {
+  color: "#F87171",
+  fontSize: 13,
+  fontWeight: "700",
+},
+
 });
