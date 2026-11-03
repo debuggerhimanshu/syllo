@@ -18,7 +18,24 @@ import {
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { supabase } from "@/lib/supabase";
+import { Directory, File, Paths } from "expo-file-system";
+import * as Crypto from "expo-crypto";
 
+import {
+  persistNoteImage,
+  deletePersistedNoteImage,
+} from "@/lib/note-image-storage";
+
+import {
+  getLocalNoteAttachments,
+  getLocalNoteById,
+  saveLocalNote,
+  saveLocalAttachment,
+  deleteLocalAttachment,
+  type LocalNoteAttachment,
+} from "@/lib/notes-repository";
+
+import { getLocalCourses } from "@/lib/timetable-repository";
 
 type Course = {
   id: string;
@@ -39,13 +56,7 @@ type NoteRecord = {
   is_pinned: boolean;
 };
 
-type NoteAttachment = {
-  id: string;
-  note_id: string;
-  storage_path: string;
-  file_name: string;
-  mime_type: "image/jpeg" | "image/png" | "image/webp";
-  file_size: number;
+type NoteAttachment = LocalNoteAttachment & {
   signedUrl?: string;
 };
 
@@ -156,7 +167,8 @@ const handleBack = () => {
 
   const [fullScreenImage, setFullScreenImage] = useState<string | null>(null);
 
-  const pickImages = async () => {
+  
+const pickImages = async () => {
   try {
     setPickingImages(true);
 
@@ -171,7 +183,8 @@ const handleBack = () => {
       return;
     }
 
-    const remainingSlots = 10 - attachments.length - pendingImages.length;
+    const remainingSlots =
+      10 - attachments.length - pendingImages.length;
 
     if (remainingSlots <= 0) {
       Alert.alert(
@@ -201,21 +214,41 @@ const handleBack = () => {
         mimeType !== "image/png" &&
         mimeType !== "image/webp"
       ) {
-        rejected.push(`${asset.fileName ?? "Image"}: unsupported format`);
+        rejected.push(
+          `${asset.fileName ?? "Image"}: unsupported format`
+        );
         continue;
       }
 
-      if (asset.fileSize == null || asset.fileSize > 2 * 1024 * 1024) {
-        rejected.push(`${asset.fileName ?? "Image"}: over 2 MB or size unknown`);
+      if (
+        asset.fileSize == null ||
+        asset.fileSize > 2 * 1024 * 1024
+      ) {
+        rejected.push(
+          `${asset.fileName ?? "Image"}: over 2 MB or size unknown`
+        );
         continue;
       }
 
-      selected.push({
-        uri: asset.uri,
-        fileName: asset.fileName ?? `image-${Date.now()}.jpg`,
-        mimeType,
-        fileSize: asset.fileSize,
-      });
+      try {
+        const fileName =
+          asset.fileName ?? `image-${Date.now()}.jpg`;
+
+        const permanentUri = persistNoteImage(
+          asset.uri,
+          fileName
+        );
+
+        selected.push({
+          uri: permanentUri,
+          fileName,
+          mimeType,
+          fileSize: asset.fileSize,
+        });
+      } catch (error) {
+        console.error("Could not save image locally:", error);
+        rejected.push(`${asset.fileName ?? "Image"}: couldn't save locally`);
+      }
     }
 
     setPendingImages((current) => [...current, ...selected]);
@@ -234,35 +267,60 @@ const handleBack = () => {
   }
 };
 
-  const loadAttachments = useCallback(async (noteId: string) => {
-  const { data, error } = await supabase
-    .from("note_attachments")
-    .select("id, note_id, storage_path, file_name, mime_type, file_size")
-    .eq("note_id", noteId)
-    .order("created_at", { ascending: true });
 
-  if (error) throw error;
+  const loadAttachments = useCallback(
+  async (noteId: string) => {
+    if (!userId) return;
 
-  const records = (data ?? []) as NoteAttachment[];
+    // Read attachments from SQLite first.
+    const localRecords = await getLocalNoteAttachments(
+      noteId,
+      userId
+    );
 
-  const withUrls = await Promise.all(
-    records.map(async (attachment) => {
-      const { data: signedData, error: signedError } =
-        await supabase.storage
-          .from("note-images")
-          .createSignedUrl(attachment.storage_path, 3600);
+    const localAttachments: NoteAttachment[] =
+      localRecords.map((attachment) => ({
+        ...attachment,
+        signedUrl: undefined,
+      }));
 
-      if (signedError) {
-        console.error("Could not create image URL:", signedError);
-        return attachment;
-      }
+    setAttachments(localAttachments);
 
-      return { ...attachment, signedUrl: signedData.signedUrl };
-    })
-  );
+    // Only request signed URLs for attachments already uploaded.
+    const withUrls = await Promise.all(
+      localAttachments.map(async (attachment) => {
+        if (
+          attachment.upload_status !== "uploaded" ||
+          !attachment.storage_path
+        ) {
+          return attachment;
+        }
+
+        try {
+          const { data, error } = await supabase.storage
+            .from("note-images")
+            .createSignedUrl(attachment.storage_path, 3600);
+
+          if (error) {
+            console.warn("Could not create image URL:", error);
+            return attachment;
+          }
+
+          return {
+            ...attachment,
+            signedUrl: data.signedUrl,
+          };
+        } catch {
+          // Keep the local attachment available offline.
+          return attachment;
+        }
+      })
+    );
 
     setAttachments(withUrls);
-}, []);
+  },
+  [userId]
+);
 
 const uploadPendingImages = async (
   noteId: string,
@@ -367,6 +425,7 @@ const uploadPendingImages = async (
   }
 };
 
+
 const deleteAttachment = async (attachment: NoteAttachment) => {
   Alert.alert(
     "Remove image?",
@@ -378,30 +437,28 @@ const deleteAttachment = async (attachment: NoteAttachment) => {
         style: "destructive",
         onPress: async () => {
           try {
-            const { error: storageError } = await supabase.storage
-              .from("note-images")
-              .remove([attachment.storage_path]);
-
-            if (storageError) throw storageError;
-
-            const { error: metadataError } = await supabase
-              .from("note_attachments")
-              .delete()
-              .eq("id", attachment.id)
-              .eq("user_id", userId ?? "");
-
-            if (metadataError) {
-              throw metadataError;
+            if (!userId) {
+              throw new Error("Please sign in and try again.");
             }
 
+            // Remove attachment metadata and queue cloud deletion.
+            await deleteLocalAttachment(attachment.id, userId);
+
+            // Delete the permanent local image file.
+            deletePersistedNoteImage(attachment.local_uri);
+
+            // Update the UI immediately.
             setAttachments((current) =>
               current.filter((item) => item.id !== attachment.id)
             );
           } catch (err) {
             console.error("Attachment deletion failed:", err);
+
             Alert.alert(
               "Couldn't remove image",
-              err instanceof Error ? err.message : "Please try again."
+              err instanceof Error
+                ? err.message
+                : "Please try again."
             );
           }
         },
@@ -410,229 +467,207 @@ const deleteAttachment = async (attachment: NoteAttachment) => {
   );
 };
 
+
   const loadEditor = useCallback(async () => {
-    setLoading(true);
-    setError("");
+  setLoading(true);
+  setError("");
 
-    try {
-      const {
-        data: { user },
-        error: authError,
-      } = await supabase.auth.getUser();
+  try {
+    const {
+      data: { session },
+      error: authError,
+    } = await supabase.auth.getSession();
 
-      if (authError) throw authError;
+    if (authError) throw authError;
 
-      if (!user) {
-        throw new Error("Please sign in before creating a note.");
+    const user = session?.user;
+
+    if (!user) {
+      throw new Error("Please sign in before creating a note.");
+    }
+
+    setUserId(user.id);
+
+    // Load courses from SQLite
+    const localCourses = await getLocalCourses(user.id);
+
+    const availableCourses: Course[] = localCourses.map((course) => ({
+      id: course.id,
+      name: course.name,
+      code: course.code ?? "",
+      color: course.color ?? null,
+    }));
+
+    setCourses(availableCourses);
+
+    if (editingId) {
+      // Load existing note from SQLite
+      const note = await getLocalNoteById(editingId, user.id);
+
+      if (!note) {
+        throw new Error(
+          "This note could not be found in local storage."
+        );
       }
 
-      setUserId(user.id);
+      setSelectedCourseId(note.course_id ?? "");
+      setTitle(note.title ?? "");
+      setContent(note.content ?? "");
+      setNoteDate(note.note_date);
+      setPriority(note.priority as Priority);
+      setIsPinned(note.is_pinned);
 
-      const { data: courseData, error: courseError } = await supabase
-        .from("courses")
-        .select("id, name, code, color")
-        .eq("user_id", user.id)
-        .order("name", { ascending: true });
-
-      if (courseError) throw courseError;
-
-      const availableCourses = (courseData ?? []) as Course[];
-      setCourses(availableCourses);
-
-      if (editingId) {
-        const { data: note, error: noteError } = await supabase
-          .from("notes")
-          .select(
-            "id, course_id, title, content, note_date, priority, is_pinned"
-          )
-          .eq("id", editingId)
-          .eq("user_id", user.id)
-          .maybeSingle();
-
-        if (noteError) throw noteError;
-        if (!note) {
-          throw new Error(
-            "This note could not be found or you don't have access to it."
-          );
-        }
-
-        setSelectedCourseId(note.course_id ?? "");
-        setTitle(note.title ?? "");
-        setContent(note.content ?? "");
-        setNoteDate(note.note_date);
-        setPriority(note.priority as Priority);
-        setIsPinned(note.is_pinned);
-
-        setOriginalSnapshot(
-          JSON.stringify({
-            courseId: note.course_id ?? "",
-            title: note.title ?? "",
-            content: note.content ?? "",
-            noteDate: note.note_date,
-            priority: note.priority as Priority,
-            isPinned: note.is_pinned,
-          })
-        );
-
-        await loadAttachments(note.id);
-
-
-      } else {
-  const startingCourseId = initialCourseId
-    ? availableCourses.some((course) => course.id === initialCourseId)
-      ? initialCourseId
-      : ""
-    : "";
-
-  if (initialCourseId && !startingCourseId) {
-    throw new Error("The selected course is not available.");
-  }
-
-  setSelectedCourseId(startingCourseId);
-
-  setOriginalSnapshot(
-    JSON.stringify({
-      courseId: startingCourseId,
-      title: "",
-      content: "",
-      noteDate,
-      priority: "medium",
-      isPinned: false,
-    })
-  );
-}
-    } catch (err) {
-      console.error("Failed to load note editor:", err);
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Couldn't load the note editor."
+      setOriginalSnapshot(
+        JSON.stringify({
+          courseId: note.course_id ?? "",
+          title: note.title ?? "",
+          content: note.content ?? "",
+          noteDate: note.note_date,
+          priority: note.priority as Priority,
+          isPinned: note.is_pinned,
+        })
       );
-    } finally {
-      setLoading(false);
+
+      await loadAttachments(note.id);
+    } else {
+      const startingCourseId = initialCourseId
+        ? availableCourses.some(
+            (course) => course.id === initialCourseId
+          )
+          ? initialCourseId
+          : ""
+        : "";
+
+      if (initialCourseId && !startingCourseId) {
+        throw new Error("The selected course is not available.");
+      }
+
+      setSelectedCourseId(startingCourseId);
+
+      setOriginalSnapshot(
+        JSON.stringify({
+          courseId: startingCourseId,
+          title: "",
+          content: "",
+          noteDate,
+          priority: "medium",
+          isPinned: false,
+        })
+      );
     }
-  }, [editingId, initialCourseId, loadAttachments]);
+  } catch (err) {
+    console.error("Failed to load note editor:", err);
+
+    setError(
+      err instanceof Error
+        ? err.message
+        : "Couldn't load the note editor."
+    );
+  } finally {
+    setLoading(false);
+  }
+}, [editingId, initialCourseId, loadAttachments]);
 
   useEffect(() => {
     void loadEditor();
   }, [loadEditor]);
 
-  const saveNote = async () => {
-    if (!userId) {
-      Alert.alert("Sign in required", "Please sign in and try again.");
-      return;
-    }
+  
+const saveNote = async () => {
+  if (!userId) {
+    Alert.alert("Sign in required", "Please sign in and try again.");
+    return;
+  }
 
-    if (!selectedCourseId) {
-      Alert.alert("Choose a course", "Select the course for this note.");
-      return;
-    }
+  if (!selectedCourseId) {
+    Alert.alert("Choose a course", "Select the course for this note.");
+    return;
+  }
 
-    if (!courses.some((course) => course.id === selectedCourseId)) {
-      Alert.alert("Invalid course", "Please select one of your courses.");
-      return;
-    }
+  if (!courses.some((course) => course.id === selectedCourseId)) {
+    Alert.alert("Invalid course", "Please select one of your courses.");
+    return;
+  }
 
-    if (!title.trim() && !content.trim()) {
-      Alert.alert(
-        "Empty note",
-        "Add a title or some content before saving."
-      );
-      return;
-    }
-
-    if (!isValidDate(noteDate)) {
-      Alert.alert(
-        "Invalid date",
-        "Enter a real date in YYYY-MM-DD format, such as 2026-09-22."
-      );
-      return;
-    }
-
-    setSaving(true);
-
-    try {
-      const noteData = {
-        user_id: userId,
-        course_id: selectedCourseId,
-        title: title.trim() || "Untitled note",
-        content,
-        note_date: noteDate,
-        priority,
-        is_pinned: isPinned,
-      };
-
-      
-let savedNoteId = editingId;
-
-if (editingId) {
-  const { data, error: updateError } = await supabase
-    .from("notes")
-    .update(noteData)
-    .eq("id", editingId)
-    .eq("user_id", userId)
-    .select("id")
-    .single();
-
-  if (updateError) throw updateError;
-
-  savedNoteId = data.id;
-} else {
-  const { data, error: insertError } = await supabase
-    .from("notes")
-    .insert(noteData)
-    .select("id")
-    .single();
-
-  if (insertError) throw insertError;
-
-  savedNoteId = data.id;
-}
-
-if (!savedNoteId) {
-  throw new Error("Couldn't determine the saved note ID.");
-}
-
-if (pendingImages.length > 0) {
-  const allImagesUploaded = await uploadPendingImages(
-    savedNoteId,
-    userId
-  );
-
-  if (!allImagesUploaded) {
+  if (!title.trim() && !content.trim()) {
     Alert.alert(
-      "Note saved with image errors",
-      "Your note text was saved, but some images could not be uploaded. Please retry those images."
+      "Empty note",
+      "Add a title or some content before saving."
     );
     return;
   }
-}
 
+  if (!isValidDate(noteDate)) {
+    Alert.alert(
+      "Invalid date",
+      "Enter a real date in YYYY-MM-DD format."
+    );
+    return;
+  }
 
-      Alert.alert(
-        "Note saved",
-        editingId
-          ? "Your changes have been saved."
-          : "Your note has been saved.",
-        [
-          {
-            text: "Done",
-            onPress: () => router.back(),
-          },
-        ]
-      );
-    } catch (err) {
-      console.error("Failed to save note:", err);
-      Alert.alert(
-        "Couldn't save note",
-        err instanceof Error
-          ? err.message
-          : "Please check your connection and try again."
-      );
-    } finally {
-      setSaving(false);
+  setSaving(true);
+
+  try {
+    const savedNoteId = editingId ?? Crypto.randomUUID();
+
+    // 1. Save note locally and queue cloud synchronization.
+    await saveLocalNote({
+      id: savedNoteId,
+      user_id: userId,
+      course_id: selectedCourseId,
+      title: title.trim() || "Untitled note",
+      content,
+      note_date: noteDate,
+      priority,
+      is_pinned: isPinned,
+    });
+
+    // 2. Save image attachment metadata locally.
+    for (const image of pendingImages) {
+      await saveLocalAttachment({
+        id: Crypto.randomUUID(),
+        note_id: savedNoteId,
+        user_id: userId,
+        local_uri: image.uri,
+        storage_path: null,
+        file_name: image.fileName,
+        mime_type: image.mimeType,
+        file_size: image.fileSize,
+        upload_status: "pending",
+      });
     }
-  };
+
+    // 3. Reload local attachments.
+    await loadAttachments(savedNoteId);
+
+    setPendingImages([]);
+
+    Alert.alert(
+      "Note saved",
+      editingId
+        ? "Your changes have been saved on this device."
+        : "Your note has been saved on this device.",
+      [
+        {
+          text: "Done",
+          onPress: () => router.back(),
+        },
+      ]
+    );
+  } catch (err) {
+    console.error("Failed to save note:", err);
+
+    Alert.alert(
+      "Couldn't save note",
+      err instanceof Error
+        ? err.message
+        : "Please try again."
+    );
+  } finally {
+    setSaving(false);
+  }
+};
+
 
   if (loading) {
     return (
@@ -883,6 +918,7 @@ if (pendingImages.length > 0) {
   </View>
 )}
 
+
 {attachments.length > 0 && (
   <View style={styles.attachmentSection}>
     <Text style={styles.attachmentSectionTitle}>
@@ -892,16 +928,18 @@ if (pendingImages.length > 0) {
     <View style={styles.imageGrid}>
       {attachments.map((attachment) => (
         <View key={attachment.id} style={styles.imageCard}>
-          {attachment.signedUrl ? (
+          {attachment.local_uri || attachment.signedUrl ? (
             <Pressable
-              onPress={() => {
-                if (attachment.signedUrl) {
-                  setFullScreenImage(attachment.signedUrl);
-                }
-              }}
+              onPress={() =>
+                setFullScreenImage(
+                  attachment.local_uri || attachment.signedUrl || null
+                )
+              }
             >
               <Image
-                source={{ uri: attachment.signedUrl }}
+                source={{
+                  uri: attachment.local_uri || attachment.signedUrl || "",
+                }}
                 style={styles.attachmentImage}
               />
             </Pressable>
@@ -927,6 +965,7 @@ if (pendingImages.length > 0) {
     </View>
   </View>
 )}
+
 
 {uploadingImages && (
   <View style={styles.uploadingRow}>

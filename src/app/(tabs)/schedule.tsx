@@ -25,6 +25,16 @@ import {
   saveReminderSettings,
 } from "@/lib/reminder-settings";
 
+import { useAuth } from "@/context/AuthContext";
+
+import {
+  getLocalSchedule,
+  saveRemoteSchedule,
+  type LocalClass,
+  type LocalCourse,
+} from "@/lib/timetable-repository";
+import { syncPendingNotes } from "@/lib/sync-engine";
+
 import { syncClassAlarms } from "@/lib/class-alarms";
 import { getClassAlarmSettings } from "@/lib/alarm-settings";
 
@@ -33,7 +43,7 @@ type Course = {
   name: string;
   code: string | null;
   faculty: string | null;
-  color: string;
+  color: string | null;
 };
 
 type Class = {
@@ -43,6 +53,7 @@ type Class = {
   start_time: string;
   end_time: string;
   room: string | null;
+  slot: string | null;
   valid_from: string | null;
   valid_until: string | null;
 };
@@ -52,7 +63,7 @@ type ScheduleItem = Class & {
 };
 
 export default function ScheduleTab() {
-  
+const { user, loading: authLoading } = useAuth();
 const [schedule, setSchedule] = useState<ScheduleItem[]>([]);
 const [loading, setLoading] = useState(true);
 const [refreshing, setRefreshing] = useState(false);
@@ -120,20 +131,66 @@ const [reminderStatus, setReminderStatus] = useState("");
     }
   };
 
-  const fetchSchedule = async (
+  
+const fetchSchedule = async (
   isRefresh = false,
   settingsToUse?: ReminderSettings,
+  userId?: string,
 ) => {
-    try {
-      if (isRefresh) {
-        setRefreshing(true);
-      } else {
-        setLoading(true);
-      }
+  let localDataLoaded = false;
 
-      setError("");
+  try {
+    if (!userId) {
+      setSchedule([]);
+      setLoading(false);
+      return;
+    }
 
-      
+    if (isRefresh) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
+
+    setError("");
+
+    // 1. Read SQLite first.
+    const localData = await getLocalSchedule(userId);
+
+    setSchedule(localData);
+    localDataLoaded = true;
+    setLoading(false);
+
+    // Synchronize pending offline changes in the background.
+    void syncPendingNotes().catch((err) => {
+      console.error("Background synchronization failed:", err);
+    });
+
+    const activeSettings = settingsToUse ?? reminderSettings;
+
+    // Keep reminders and alarms working with local data.
+    await syncReminders(localData, activeSettings);
+
+    const localAlarmSettings = await getClassAlarmSettings();
+
+    await syncClassAlarms(
+      localData.map((item) => ({
+        id: item.id,
+        weekday: item.weekday,
+        start_time: item.start_time,
+        valid_from: item.valid_from,
+        valid_until: item.valid_until,
+        course: item.course
+          ? {
+              name: item.course.name,
+              code: item.course.code,
+            }
+          : null,
+      })),
+      localAlarmSettings,
+    );
+
+    // 2. Fetch the latest timetable from Supabase.
     const { data, error } = await supabase
       .from("classes")
       .select(`
@@ -143,33 +200,33 @@ const [reminderStatus, setReminderStatus] = useState("");
         start_time,
         end_time,
         room,
+        slot,
         valid_from,
         valid_until,
         courses (
           id,
+          user_id,
           name,
           code,
           faculty,
           color
         )
       `)
+      .eq("courses.user_id", userId)
       .order("weekday", { ascending: true })
       .order("start_time", { ascending: true });
 
+    if (error) {
+      throw error;
+    }
 
-      if (error) {
-        console.error("Schedule fetch error:", error);
-        setError(error.message);
-        return;
-      }
+    // 3. Normalize the Supabase response.
+    const formattedData: ScheduleItem[] = (data ?? []).map(
+      (item: any) => {
+        const course = Array.isArray(item.courses)
+          ? item.courses[0] ?? null
+          : item.courses ?? null;
 
-      const formattedData: ScheduleItem[] = (data ?? []).map(
-        (item: any) => {
-          const course = Array.isArray(item.courses)
-            ? item.courses[0] ?? null
-            : item.courses ?? null;
-
-          
         return {
           id: item.id,
           course_id: item.course_id,
@@ -177,53 +234,110 @@ const [reminderStatus, setReminderStatus] = useState("");
           start_time: item.start_time,
           end_time: item.end_time,
           room: item.room,
+          slot: item.slot,
           valid_from: item.valid_from,
           valid_until: item.valid_until,
           course,
         };
+      },
+    );
 
-        }
+    const remoteCourses: LocalCourse[] = formattedData
+      .filter((item) => item.course !== null)
+      .map((item) => item.course as LocalCourse)
+      .filter(
+        (course, index, array) =>
+          array.findIndex((entry) => entry.id === course.id) === index,
       );
 
-      
-      setSchedule(formattedData);
+    const remoteClasses: LocalClass[] = formattedData.map(
+      ({
+        id,
+        course_id,
+        weekday,
+        start_time,
+        end_time,
+        room,
+        slot,
+        valid_from,
+        valid_until,
+      }) => ({
+        id,
+        course_id,
+        weekday,
+        start_time,
+        end_time,
+        room,
+        slot,
+        valid_from,
+        valid_until,
+      }),
+    );
 
-      await syncReminders(
-        formattedData,
-        settingsToUse ?? reminderSettings,
-      );
+    // 4. Update SQLite without overwriting pending offline changes.
+    await saveRemoteSchedule(
+      userId,
+      remoteCourses,
+      remoteClasses,
+    );
 
-      const classAlarmSettings = await getClassAlarmSettings();
+    // 5. Read the updated local timetable.
+    const updatedSchedule = await getLocalSchedule(userId);
 
-      const alarmResult = await syncClassAlarms(
-        formattedData.map((item) => ({
-          id: item.id,
-          weekday: item.weekday,
-          start_time: item.start_time,
-          valid_from: item.valid_from,
-          valid_until: item.valid_until,
-          course: item.course
-            ? {
-                name: item.course.name,
-                code: item.course.code,
-              }
-            : null,
-        })),
-        classAlarmSettings,
-      );
+    setSchedule(updatedSchedule);
 
-      console.log("Class alarms scheduled:", alarmResult.scheduled);
+    // 6. Synchronize reminders and alarms with the updated timetable.
+    await syncReminders(updatedSchedule, activeSettings);
 
+    const alarmSettings = await getClassAlarmSettings();
 
-      console.log("Schedule loaded:", formattedData);
-    } catch (err) {
-      console.error("Unexpected schedule error:", err);
-      setError("Something went wrong while loading your schedule.");
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  };
+    const alarmResult = await syncClassAlarms(
+      updatedSchedule.map((item) => ({
+        id: item.id,
+        weekday: item.weekday,
+        start_time: item.start_time,
+        valid_from: item.valid_from,
+        valid_until: item.valid_until,
+        course: item.course
+          ? {
+              name: item.course.name,
+              code: item.course.code,
+            }
+          : null,
+      })),
+      alarmSettings,
+    );
+
+    console.log("Class alarms scheduled:", alarmResult.scheduled);
+    console.log("Schedule loaded:", updatedSchedule);
+  
+} catch (err) {
+  const errorMessage =
+    err instanceof Error
+      ? err.message
+      : typeof err === "object" && err !== null
+        ? JSON.stringify(err)
+        : String(err);
+
+  const isNetworkError =
+    /fetch failed|UnknownHostException|Network request failed|Failed to fetch|Unable to resolve host/i.test(
+      errorMessage
+    );
+
+  if (!isNetworkError) {
+    console.error("Schedule loading error:", err);
+  }
+
+  // Keep displaying locally cached data when offline.
+  if (!localDataLoaded) {
+    setError("Couldn't load your schedule. Please try again.");
+  }
+} finally {
+    setLoading(false);
+    setRefreshing(false);
+  }
+};
+
 
   /*
    * Fetch every time the Schedule tab becomes active.
@@ -235,6 +349,14 @@ useFocusEffect(
     let active = true;
 
     const initializeSchedule = async () => {
+      if (authLoading) return;
+
+      if (!user?.id) {
+        setSchedule([]);
+        setLoading(false);
+        return;
+      }
+
       setReminderLoading(true);
 
       try {
@@ -245,12 +367,13 @@ useFocusEffect(
         setReminderSettings(savedSettings);
         setReminderLoading(false);
 
-        await fetchSchedule(false, savedSettings);
+        await fetchSchedule(false, savedSettings, user.id);
       } catch (err) {
         console.error("Failed to initialize schedule:", err);
 
         if (active) {
           setReminderLoading(false);
+          setLoading(false);
         }
       }
     };
@@ -260,14 +383,16 @@ useFocusEffect(
     return () => {
       active = false;
     };
-  }, [])
+  }, [user?.id, authLoading])
 );
 
 
 
   const handleRefresh = () => {
-    fetchSchedule(true);
-  };
+  if (user?.id) {
+    void fetchSchedule(true, undefined, user.id);
+  }
+};
 
   const getDayName = (weekday: number) => {
     const days = [
@@ -320,6 +445,8 @@ useFocusEffect(
 
 
 useEffect(() => {
+  if (authLoading || !user?.id) return;
+
   let isRefreshing = false;
 
   const subscription = AppState.addEventListener(
@@ -331,10 +458,12 @@ useEffect(() => {
 
       try {
         const savedSettings = await getReminderSettings();
+
         setReminderSettings(savedSettings);
-        await fetchSchedule(false, savedSettings);
+
+        await fetchSchedule(false, savedSettings, user.id);
       } catch (err) {
-        console.error("Failed to refresh reminders:", err);
+        console.error("Failed to refresh schedule:", err);
       } finally {
         isRefreshing = false;
       }
@@ -342,7 +471,7 @@ useEffect(() => {
   );
 
   return () => subscription.remove();
-}, []);
+}, [user?.id, authLoading]);
 
 
 

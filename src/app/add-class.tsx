@@ -14,15 +14,16 @@ import {
   View,
 } from "react-native";
 
-import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/context/AuthContext";
+import {
+  generateLocalId,
+  getLocalCourses,
+  getLocalSchedule,
+  saveLocalClass,
+  type LocalCourse,
+} from "@/lib/timetable-repository";
 
-type Course = {
-  id: string;
-  name: string;
-  code: string | null;
-  faculty: string | null;
-  color: string;
-};
+type Course = LocalCourse;
 
 type ExistingClass = {
   id: string;
@@ -48,6 +49,7 @@ export default function AddClassScreen() {
   // =====================================================
   // STATE
   // =====================================================
+  const { user, loading: authLoading } = useAuth();
 
   const [courses, setCourses] = useState<Course[]>([]);
 
@@ -113,47 +115,32 @@ export default function AddClassScreen() {
   // =====================================================
 
   useEffect(() => {
-    fetchCourses();
-  }, []);
+  if (authLoading) return;
 
-  const fetchCourses = async () => {
-    try {
-      setLoadingCourses(true);
-      setError("");
+  if (!user) {
+    setError("Please sign in to add a class.");
+    setLoadingCourses(false);
+    return;
+  }
 
-      const { data, error } = await supabase
-        .from("courses")
-        .select(
-          "id, name, code, faculty, color"
-        )
-        .order("name", {
-          ascending: true,
-        });
+  fetchCourses(user.id);
+}, [authLoading, user?.id]);
 
-      if (error) {
-        console.error(
-          "Courses fetch error:",
-          error
-        );
+const fetchCourses = async (userId: string) => {
+  try {
+    setLoadingCourses(true);
+    setError("");
 
-        setError(error.message);
-        return;
-      }
+    const localCourses = await getLocalCourses(userId);
 
-      setCourses(data ?? []);
-    } catch (err) {
-      console.error(
-        "Unexpected courses error:",
-        err
-      );
-
-      setError(
-        "Something went wrong while loading courses."
-      );
-    } finally {
-      setLoadingCourses(false);
-    }
-  };
+    setCourses(localCourses);
+  } catch (err) {
+    console.error("Local courses fetch error:", err);
+    setError("Unable to load your courses.");
+  } finally {
+    setLoadingCourses(false);
+  }
+};
 
   // =====================================================
   // TIME HELPERS
@@ -217,215 +204,98 @@ export default function AddClassScreen() {
   // =====================================================
 
   const handleSaveClass = async () => {
-    try {
-      setError("");
+  try {
+    setError("");
 
-      // -----------------------------------------------
-      // VALIDATION
-      // -----------------------------------------------
+    if (!user) {
+      setError("Please sign in to add a class.");
+      return;
+    }
 
-      if (!selectedCourse) {
-        setError("Please select a course.");
-        return;
+    if (!selectedCourse) {
+      setError("Please select a course.");
+      return;
+    }
+
+    if (!selectedDay) {
+      setError("Please select a day.");
+      return;
+    }
+
+    const startMinutes =
+      startTime.getHours() * 60 +
+      startTime.getMinutes();
+
+    const endMinutes =
+      endTime.getHours() * 60 +
+      endTime.getMinutes();
+
+    if (endMinutes <= startMinutes) {
+      setError("End time must be after start time.");
+      return;
+    }
+
+    setSaving(true);
+
+    // Check conflicts using locally stored schedule.
+    const existingClasses = await getLocalSchedule(user.id);
+
+    const conflictingClass = existingClasses.find((item) => {
+      if (item.weekday !== selectedDay) {
+        return false;
       }
 
-      if (!selectedDay) {
-        setError("Please select a day.");
-        return;
-      }
+      const existingStart = timeToMinutes(item.start_time);
+      const existingEnd = timeToMinutes(item.end_time);
 
-      const startMinutes =
-        startTime.getHours() * 60 +
-        startTime.getMinutes();
-
-      const endMinutes =
-        endTime.getHours() * 60 +
-        endTime.getMinutes();
-
-      if (endMinutes <= startMinutes) {
-        setError(
-          "End time must be after start time."
-        );
-        return;
-      }
-
-      // -----------------------------------------------
-      // CHECK FOR SCHEDULE CONFLICT
-      // -----------------------------------------------
-
-      const {
-        data: existingClassesData,
-        error: conflictError,
-      } = await supabase
-        .from("classes")
-        .select(`
-          id,
-          weekday,
-          start_time,
-          end_time,
-          room,
-          courses (
-            id,
-            name,
-            code
-          )
-        `)
-        .eq("weekday", selectedDay);
-
-      if (conflictError) {
-        console.error(
-          "Conflict check error:",
-          conflictError
-        );
-
-        setError(
-          "Unable to check for schedule conflicts."
-        );
-
-        return;
-      }
-
-      // Explicitly type the Supabase result.
-      // This prevents TypeScript from treating
-      // the relational `courses` value as `never`.
-
-      const existingClasses =
-        (existingClassesData ??
-          []) as ExistingClass[];
-
-      // -----------------------------------------------
-      // COMPARE TIMES
-      // -----------------------------------------------
-
-      const newStartMinutes =
-        startTime.getHours() * 60 +
-        startTime.getMinutes();
-
-      const newEndMinutes =
-        endTime.getHours() * 60 +
-        endTime.getMinutes();
-
-      const conflictingClass =
-        existingClasses.find(
-          (existingClass) => {
-            const existingStart =
-              timeToMinutes(
-                existingClass.start_time
-              );
-
-            const existingEnd =
-              timeToMinutes(
-                existingClass.end_time
-              );
-
-            return (
-              newStartMinutes <
-                existingEnd &&
-              newEndMinutes >
-                existingStart
-            );
-          }
-        );
-
-      // -----------------------------------------------
-      // CONFLICT FOUND
-      // -----------------------------------------------
-
-      if (conflictingClass) {
-        let courseName =
-          "another class";
-
-        if (
-          Array.isArray(
-            conflictingClass.courses
-          )
-        ) {
-          courseName =
-            conflictingClass.courses[0]
-              ?.name ?? "another class";
-        } else {
-          courseName =
-            conflictingClass.courses
-              ?.name ?? "another class";
-        }
-
-        const existingStart =
-          conflictingClass.start_time.slice(
-            0,
-            5
-          );
-
-        const existingEnd =
-          conflictingClass.end_time.slice(
-            0,
-            5
-          );
-
-        setError(
-          `Schedule conflict with ${courseName} (${existingStart} - ${existingEnd}).`
-        );
-
-        return;
-      }
-
-      // -----------------------------------------------
-      // CONVERT TIME
-      // -----------------------------------------------
-
-      const postgresStartTime =
-        formatPostgresTime(startTime);
-
-      const postgresEndTime =
-        formatPostgresTime(endTime);
-
-      // -----------------------------------------------
-      // SAVE TO SUPABASE
-      // -----------------------------------------------
-
-      setSaving(true);
-
-      const {
-        error: insertError,
-      } = await supabase
-        .from("classes")
-        .insert({
-          course_id: selectedCourse.id,
-          weekday: selectedDay,
-          start_time: postgresStartTime,
-          end_time: postgresEndTime,
-          room: room.trim() || null,
-        });
-
-      if (insertError) {
-        console.error(
-          "Class insert error:",
-          insertError
-        );
-
-        setError(insertError.message);
-        return;
-      }
-
-      
-      // -----------------------------------------------
-      // SUCCESS — refresh class reminders
-      // -----------------------------------------------
-
-      router.back();
-
-    } catch (err) {
-      console.error(
-        "Unexpected save class error:",
-        err
+      return (
+        startMinutes < existingEnd &&
+        endMinutes > existingStart
       );
+    });
+
+    if (conflictingClass) {
+      const courseName =
+        conflictingClass.course?.name ?? "another class";
+
+      const existingStart =
+        conflictingClass.start_time.slice(0, 5);
+
+      const existingEnd =
+        conflictingClass.end_time.slice(0, 5);
 
       setError(
-        "Something went wrong while saving the class."
+        `Schedule conflict with ${courseName} (${existingStart} - ${existingEnd}).`
       );
-    } finally {
-      setSaving(false);
+
+      return;
     }
-  };
+
+    // Create a UUID locally so the class can be saved offline.
+    const newClass = {
+      id: generateLocalId(),
+      course_id: selectedCourse.id,
+      weekday: selectedDay,
+      start_time: formatPostgresTime(startTime),
+      end_time: formatPostgresTime(endTime),
+      room: room.trim() || null,
+      slot: null,
+      valid_from: null,
+      valid_until: null,
+    };
+
+    // Save locally and enqueue for cloud synchronization.
+    await saveLocalClass(newClass);
+
+    router.back();
+  } catch (err) {
+    console.error("Unexpected save class error:", err);
+
+    setError("Something went wrong while saving the class.");
+  } finally {
+    setSaving(false);
+  }
+};
 
   // =====================================================
   // UI

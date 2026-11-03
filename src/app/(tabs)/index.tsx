@@ -20,6 +20,7 @@ import {
   saveClassAlarmSettings,
   type ClassAlarmSettings,
 } from "@/lib/alarm-settings";
+import { getLocalSchedule } from "@/lib/timetable-repository";
 import { syncClassAlarms } from "@/lib/class-alarms";
 
 type Course = {
@@ -104,68 +105,58 @@ export default function HomeScreen() {
 
   const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
-  const fetchClasses = useCallback(async (isRefresh = false) => {
-    if (isRefresh) {
-      setRefreshing(true);
-    } else {
-      setFetching(true);
-    }
+  
+const fetchClasses = useCallback(async (isRefresh = false) => {
+  if (!session?.user?.id) return;
 
-    setError(null);
+  if (isRefresh) {
+    setRefreshing(true);
+  } else {
+    setFetching(true);
+  }
 
-    try {
-      const currentDate = new Date();
-      const weekday =
-        currentDate.getDay() === 0 ? 7 : currentDate.getDay();
+  setError(null);
 
-      const { data, error: queryError } = await supabase
-        .from("classes")
-        .select(`
-          id,
-          course_id,
-          weekday,
-          start_time,
-          end_time,
-          room,
-          courses (
-            id,
-            name,
-            code,
-            faculty,
-            color
-          )
-        `)
-        .eq("weekday", weekday)
-        .order("start_time", { ascending: true });
+  try {
+    const currentDate = new Date();
 
-      if (queryError) {
-        throw queryError;
-      }
+    const weekday =
+      currentDate.getDay() === 0
+        ? 7
+        : currentDate.getDay();
 
-      const normalized: ClassItem[] = (data ?? []).map((item: any) => ({
+    // Read the complete timetable from SQLite.
+    const localSchedule = await getLocalSchedule(
+      session.user.id
+    );
+
+    // Display only today's classes.
+    const todayClasses: ClassItem[] = localSchedule
+      .filter((item) => item.weekday === weekday)
+      .map((item) => ({
         id: item.id,
         course_id: item.course_id,
         weekday: item.weekday,
         start_time: item.start_time,
         end_time: item.end_time,
         room: item.room,
-        course: Array.isArray(item.courses)
-          ? item.courses[0] ?? null
-          : item.courses ?? null,
+        course: item.course,
       }));
 
-      setClasses(normalized);
-      setNow(new Date());
-    } catch (err) {
-      console.error("Home timetable error:", err);
-      setError(
-        "Couldn't load your timetable. Check your connection and try again."
-      );
-    } finally {
-      setFetching(false);
-      setRefreshing(false);
-    }
-  }, []);
+    setClasses(todayClasses);
+    setNow(new Date());
+  } catch (err) {
+    console.error("Local home timetable error:", err);
+
+    setError(
+      "Couldn't load your timetable. Please try again."
+    );
+  } finally {
+    setFetching(false);
+    setRefreshing(false);
+  }
+}, [session?.user?.id]);
+
 
   useFocusEffect(
     useCallback(() => {
@@ -186,8 +177,9 @@ export default function HomeScreen() {
   );
 
   
+
 const toggleClassAlarm = useCallback(async (classId: string) => {
-  if (savingAlarmId) return;
+  if (savingAlarmId || !session?.user?.id) return;
 
   const previous = alarmSettings;
   const next: ClassAlarmSettings = {
@@ -201,36 +193,22 @@ const toggleClassAlarm = useCallback(async (classId: string) => {
   try {
     await saveClassAlarmSettings(next);
 
-    const { data, error } = await supabase
-      .from("classes")
-      .select(`
-        id,
-        weekday,
-        start_time,
-        valid_from,
-        valid_until,
-        courses (
-          name,
-          code
-        )
-      `);
+    // Read all classes from local SQLite storage.
+    const localSchedule = await getLocalSchedule(session.user.id);
 
-    if (error) throw error;
-
-    const alarmClasses = (data ?? []).map((item: any) => {
-      const course = Array.isArray(item.courses)
-        ? item.courses[0] ?? null
-        : item.courses ?? null;
-
-      return {
-        id: item.id,
-        weekday: item.weekday,
-        start_time: item.start_time,
-        valid_from: item.valid_from,
-        valid_until: item.valid_until,
-        course,
-      };
-    });
+    const alarmClasses = localSchedule.map((item) => ({
+      id: item.id,
+      weekday: item.weekday,
+      start_time: item.start_time,
+      valid_from: item.valid_from,
+      valid_until: item.valid_until,
+      course: item.course
+        ? {
+            name: item.course.name,
+            code: item.course.code,
+          }
+        : null,
+    }));
 
     const result = await syncClassAlarms(alarmClasses, next);
 
@@ -264,7 +242,8 @@ const toggleClassAlarm = useCallback(async (classId: string) => {
   } finally {
     setSavingAlarmId(null);
   }
-}, [alarmSettings, savingAlarmId]);
+}, [alarmSettings, savingAlarmId, session?.user?.id]);
+
 
 
   useFocusEffect(
@@ -373,6 +352,7 @@ function ScrollContent({
   savingAlarmId: string | null;
   onToggleAlarm: (classId: string) => void;
 }) {
+
   return (
     <View style={styles.screen}>
       <ScrollView
@@ -391,8 +371,9 @@ function ScrollContent({
         <View style={styles.header}>
           <View style={styles.headerText}>
             <Text style={styles.eyebrow}>YOUR STUDENT SPACE</Text>
-            <Text style={styles.greeting}>{getGreeting()} 👋</Text>
+            <Text style={styles.greeting}>{getGreeting()} </Text>
             <Text style={styles.date}>{getDateLabel()}</Text>
+
           </View>
 
           <TouchableOpacity

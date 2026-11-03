@@ -10,16 +10,26 @@ import {
   View,
 } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
+import { useAuth } from "@/context/AuthContext";
+
+import { getLocalCourses } from "@/lib/timetable-repository";
 import { supabase } from "../../lib/supabase";
+
+import {
+  getLocalNotes,
+  saveRemoteNotes,
+} from "@/lib/notes-repository";
+
+import { saveLocalCourse } from "@/lib/timetable-repository";
+import { syncPendingNotes } from "@/lib/sync-engine";
 
 type Course = {
   id: string;
   name: string;
-  code: string;
+  code: string | null;
   faculty: string | null;
   color: string | null;
 };
-
 type Priority = "low" | "medium" | "high";
 type Filter = "all" | "pinned" | Priority;
 
@@ -43,6 +53,7 @@ const priorityColors: Record<Priority, string> = {
 
 export default function NotesTab() {
   const router = useRouter();
+  const { user, loading: authLoading } = useAuth();
 
   const [courses, setCourses] = useState<Course[]>([]);
   const [notes, setNotes] = useState<Note[]>([]);
@@ -56,65 +67,135 @@ export default function NotesTab() {
     null
   );
 
-  const loadNotes = useCallback(async (showLoader = false) => {
-    if (showLoader) setLoading(true);
+  
+const loadNotes = useCallback(async (showLoader = false) => {
+  if (authLoading) return;
+
+  if (!user?.id) {
+    setCourses([]);
+    setNotes([]);
+    setError("Please sign in to view your notes.");
+    setLoading(false);
+    setRefreshing(false);
+    return;
+  }
+
+  let localDataLoaded = false;
+  let currentStep = "Starting Notes loading";
+
+  try {
     setError("");
 
+    // STEP 1: Load locally cached courses and notes.
+    currentStep = "Loading local courses and notes";
+    const [localCourses, localNotes] = await Promise.all([
+      getLocalCourses(user.id),
+      getLocalNotes(user.id),
+    ]);
+
+    setCourses(localCourses);
+    setNotes(localNotes);
+    localDataLoaded = true;
+
+    setLoading(false);
+
+    // STEP 1.5: Synchronize pending notes with Supabase.
+    currentStep = "Synchronizing pending changes";
     try {
-      const {
-        data: { user },
-        error: authError,
-      } = await supabase.auth.getUser();
-
-      if (authError) throw authError;
-
-      if (!user) {
-        setCourses([]);
-        setNotes([]);
-        setError("Please sign in to view your notes.");
-        return;
-      }
-
-      const [courseResult, noteResult] = await Promise.all([
-        supabase
-          .from("courses")
-          .select("id, name, code, faculty, color")
-          .eq("user_id", user.id)
-          .order("name", { ascending: true }),
-
-        supabase
-          .from("notes")
-          .select(
-            "id, course_id, title, content, note_date, priority, is_pinned, created_at, updated_at"
-          )
-          .eq("user_id", user.id)
-          .order("note_date", { ascending: false })
-          .order("updated_at", { ascending: false }),
-      ]);
-
-      if (courseResult.error) throw courseResult.error;
-      if (noteResult.error) throw noteResult.error;
-
-      setCourses((courseResult.data ?? []) as Course[]);
-      setNotes((noteResult.data ?? []) as Note[]);
-    } catch (err) {
-      console.error("Failed to load notes:", err);
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Couldn't load your notes. Please try again."
-      );
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
+      await syncPendingNotes();
+    } catch (syncError) {
+      console.warn("Background note sync failed:", syncError);
     }
-  }, []);
+
+    // STEP 2: Refresh data from Supabase in the background.
+    currentStep = "Fetching courses and notes from Supabase";
+    const [courseResult, noteResult] = await Promise.all([
+      supabase
+        .from("courses")
+        .select("id, name, code, faculty, color")
+        .eq("user_id", user.id)
+        .order("name", { ascending: true }),
+
+      supabase
+        .from("notes")
+        .select(
+  "id, user_id, course_id, title, content, note_date, priority, is_pinned, created_at, updated_at"
+)
+        .eq("user_id", user.id)
+        .order("note_date", { ascending: false })
+        .order("updated_at", { ascending: false }),
+    ]);
+
+    if (courseResult.error) throw courseResult.error;
+    if (noteResult.error) throw noteResult.error;
+
+    // STEP 3: Cache cloud courses locally.
+    currentStep = "Saving remote courses to SQLite";
+    for (const course of courseResult.data ?? []) {
+      await saveLocalCourse(
+        {
+          ...course,
+          user_id: user.id,
+        },
+        false
+      );
+    }
+
+    // STEP 4: Cache cloud notes without overwriting pending edits.
+    currentStep = "Saving remote notes to SQLite";
+    await saveRemoteNotes(user.id, noteResult.data ?? []);
+
+    // STEP 5: Refresh the UI from SQLite.
+    currentStep = "Reloading updated local data";
+    const [updatedCourses, updatedNotes] = await Promise.all([
+      getLocalCourses(user.id),
+      getLocalNotes(user.id),
+    ]);
+
+    setCourses(updatedCourses);
+    setNotes(updatedNotes);
+  } catch (err) {
+    const errorMessage =
+      err instanceof Error ? err.message : String(err);
+
+    const isNetworkError =
+      /fetch failed|UnknownHostException|Network request failed|Failed to fetch|Unable to resolve host/i.test(
+        errorMessage
+      );
+
+    if (!isNetworkError) {
+      console.error("NOTES LOADING DIAGNOSTIC:", {
+        failedAt: currentStep,
+        errorName: err instanceof Error ? err.name : typeof err,
+        errorMessage: err instanceof Error ? err.message : String(err),
+        errorCode: (err as any)?.code,
+        errorDetails: JSON.stringify(
+          err,
+          Object.getOwnPropertyNames(err ?? {})
+        ),
+      });
+    }
+
+    // Keep cached content visible when cloud access fails.
+    if (!localDataLoaded) {
+      setError(
+        "Couldn't load your notes. Please try again."
+      );
+    }
+  } finally {
+    setLoading(false);
+    setRefreshing(false);
+  }
+}, [user?.id, authLoading]);
+
 
   useFocusEffect(
-    useCallback(() => {
+  useCallback(() => {
+    if (!authLoading) {
       void loadNotes(true);
-    }, [loadNotes])
-  );
+    }
+  }, [loadNotes, authLoading])
+);
 
   const courseCounts = useMemo(() => {
     const counts: Record<string, number> = {};

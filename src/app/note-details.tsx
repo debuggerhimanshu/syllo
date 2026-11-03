@@ -1,5 +1,5 @@
 
-import { useEffect,useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Animated,
@@ -14,6 +14,16 @@ import {
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { supabase } from "../lib/supabase";
+
+import {
+  deleteLocalNote,
+  getLocalNoteAttachments,
+  getLocalNoteById,
+  type LocalNoteAttachment,
+} from "@/lib/notes-repository";
+
+import { getLocalCourses } from "@/lib/timetable-repository";
+import { deletePersistedNoteImage } from "@/lib/note-image-storage";
 
 type Priority = "low" | "medium" | "high";
 
@@ -32,16 +42,11 @@ type NoteDetails = {
 type CourseDetails = {
   id: string;
   name: string;
-  code: string;
+  code: string | null;
   color: string | null;
 };
 
-type NoteAttachment = {
-  id: string;
-  storage_path: string;
-  file_name: string;
-  mime_type: "image/jpeg" | "image/png" | "image/webp";
-  file_size: number;
+type NoteAttachment = LocalNoteAttachment & {
   signedUrl?: string;
 };
 
@@ -68,7 +73,8 @@ useEffect(() => {
 }, [showBackButton, backButtonX]);
 
 
-  const loadNoteDetails = async () => {
+  
+const loadNoteDetails = async () => {
   setLoading(true);
   setError("");
 
@@ -78,88 +84,111 @@ useEffect(() => {
     }
 
     const {
-      data: { user },
+      data: { session },
       error: authError,
-    } = await supabase.auth.getUser();
+    } = await supabase.auth.getSession();
 
     if (authError) throw authError;
+
+    const user = session?.user;
 
     if (!user) {
       throw new Error("Please sign in to view this note.");
     }
 
-    const { data: noteData, error: noteError } = await supabase
-      .from("notes")
-      .select(
-        "id, course_id, title, content, note_date, priority, is_pinned, created_at, updated_at"
-      )
-      .eq("id", noteId)
-      .eq("user_id", user.id)
-      .maybeSingle();
+    // 1. Load note from SQLite.
+    const localNote = await getLocalNoteById(noteId, user.id);
 
-    if (noteError) throw noteError;
-
-    if (!noteData) {
-      throw new Error("This note could not be found.");
+    if (!localNote) {
+      throw new Error(
+        "This note isn't available on this device. Connect to the internet and refresh your notes first."
+      );
     }
 
-    const loadedNote = noteData as NoteDetails;
-    setNote(loadedNote);
+    setNote({
+      id: localNote.id,
+      course_id: localNote.course_id,
+      title: localNote.title,
+      content: localNote.content,
+      note_date: localNote.note_date,
+      priority: localNote.priority,
+      is_pinned: localNote.is_pinned,
+      created_at: localNote.created_at,
+      updated_at: localNote.updated_at,
+    });
 
-    if (loadedNote.course_id) {
-      const { data: courseData, error: courseError } = await supabase
-        .from("courses")
-        .select("id, name, code, color")
-        .eq("id", loadedNote.course_id)
-        .eq("user_id", user.id)
-        .maybeSingle();
+    // 2. Load course from SQLite.
+    if (localNote.course_id) {
+      const localCourses = await getLocalCourses(user.id);
 
-      if (courseError) throw courseError;
-      setCourse((courseData as CourseDetails | null) ?? null);
+      const localCourse = localCourses.find(
+        (item) => item.id === localNote.course_id
+      );
+
+      setCourse(
+        localCourse
+          ? {
+              id: localCourse.id,
+              name: localCourse.name,
+              code: localCourse.code,
+              color: localCourse.color,
+            }
+          : null
+      );
     } else {
       setCourse(null);
     }
 
-    const { data: attachmentData, error: attachmentError } = await supabase
-      .from("note_attachments")
-      .select("id, storage_path, file_name, mime_type, file_size")
-      .eq("note_id", noteId)
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: true });
-
-    if (attachmentError) throw attachmentError;
-
-    const loadedAttachments = await Promise.all(
-      (attachmentData ?? []).map(async (attachment) => {
-        const { data: signedData, error: signedError } = await supabase.storage
-          .from("note-images")
-          .createSignedUrl(attachment.storage_path, 3600);
-
-        if (signedError) {
-          console.error("Could not load attachment URL:", signedError);
-          return attachment as NoteAttachment;
-        }
-
-        return {
-          ...attachment,
-          signedUrl: signedData.signedUrl,
-        } as NoteAttachment;
-      })
+    // 3. Load attachment metadata from SQLite.
+    const localAttachments = await getLocalNoteAttachments(
+      noteId,
+      user.id
     );
 
-    
+    const loadedAttachments: NoteAttachment[] =
+      await Promise.all(
+        localAttachments.map(async (attachment) => {
+          if (
+            attachment.upload_status !== "uploaded" ||
+            !attachment.storage_path
+          ) {
+            return attachment;
+          }
 
-    
+          try {
+            const { data, error } = await supabase.storage
+              .from("note-images")
+              .createSignedUrl(attachment.storage_path, 3600);
+
+            if (error) {
+              return attachment;
+            }
+
+            return {
+              ...attachment,
+              signedUrl: data.signedUrl,
+            };
+          } catch {
+            return attachment;
+          }
+        })
+      );
+
     setAttachments(loadedAttachments);
-} catch (err) {
+  } catch (err) {
     console.error("Failed to load note details:", err);
+
     setError(
-        err instanceof Error ? err.message : "Couldn't load this note."
+      err instanceof Error
+        ? err.message
+        : "Couldn't load this note."
     );
-} finally {
+  } finally {
     setLoading(false);
-}
+  }
 };
+
+
 
 const handleDeleteNote = () => {
   if (!note) return;
@@ -180,55 +209,43 @@ const handleDeleteNote = () => {
             setLoading(true);
             setError("");
 
+            // Get the locally stored authenticated session.
             const {
-              data: { user },
+              data: { session },
               error: authError,
-            } = await supabase.auth.getUser();
+            } = await supabase.auth.getSession();
 
             if (authError) throw authError;
-            if (!user) throw new Error("Please sign in again.");
 
-            const { data: attachmentData, error: attachmentError } =
-              await supabase
-                .from("note_attachments")
-                .select("id, storage_path")
-                .eq("note_id", note.id)
-                .eq("user_id", user.id);
+            const userId = session?.user?.id;
 
-            if (attachmentError) throw attachmentError;
-
-            const attachmentPaths = (attachmentData ?? []).map(
-              (attachment) => attachment.storage_path
-            );
-
-            // Delete the note first. The database cascade removes
-            // its attachment records.
-            const { error: deleteError } = await supabase
-              .from("notes")
-              .delete()
-              .eq("id", note.id)
-              .eq("user_id", user.id);
-
-            if (deleteError) throw deleteError;
-
-            // Then remove the image files from private storage.
-            if (attachmentPaths.length > 0) {
-              const { error: storageError } = await supabase.storage
-                .from("note-images")
-                .remove(attachmentPaths);
-
-              if (storageError) {
-                console.error(
-                  "Note deleted, but some image files may remain:",
-                  storageError
-                );
-              }
+            if (!userId) {
+              throw new Error("Please sign in again.");
             }
 
-            Alert.alert("Note deleted", "Your note has been deleted.");
+            // Read local attachment URIs before SQLite cascade deletion.
+            const localAttachments = await getLocalNoteAttachments(
+              note.id,
+              userId
+            );
+
+            // Delete note locally and queue cloud deletions.
+            await deleteLocalNote(note.id, userId);
+
+            // Remove permanent local image files.
+            for (const attachment of localAttachments) {
+              deletePersistedNoteImage(attachment.local_uri);
+            }
+
+            Alert.alert(
+              "Note deleted",
+              "Your note has been deleted from this device."
+            );
+
             router.replace("/(tabs)/notes");
           } catch (err) {
             console.error("Failed to delete note:", err);
+
             setError(
               err instanceof Error
                 ? err.message
@@ -242,6 +259,7 @@ const handleDeleteNote = () => {
     ]
   );
 };
+
 
 useEffect(() => {
 void loadNoteDetails();

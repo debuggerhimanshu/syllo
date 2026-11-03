@@ -1,3 +1,4 @@
+
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -12,93 +13,74 @@ import {
   useLocalSearchParams,
 } from "expo-router";
 
-import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/context/AuthContext";
 
-type ClassDetailsData = {
-  id: string;
-  weekday: number;
-  start_time: string;
-  end_time: string;
-  room: string | null;
-  courses:
-    | {
-        id: string;
-        name: string;
-        code: string | null;
-        faculty: string | null;
-        color: string;
-      }
-    | {
-        id: string;
-        name: string;
-        code: string | null;
-        faculty: string | null;
-        color: string;
-      }[]
-    | null;
-};
+import {
+  getLocalSchedule,
+  deleteLocalClass,
+  type ScheduleItem,
+} from "@/lib/timetable-repository";
 
 export default function ClassDetails() {
   const { id } = useLocalSearchParams<{ id: string }>();
 
+  const { user, loading: authLoading } = useAuth();
+
   const [classData, setClassData] =
-    useState<ClassDetailsData | null>(null);
+    useState<ScheduleItem | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    fetchClassDetails();
-  }, [id]);
+    let active = true;
 
-  const fetchClassDetails = async () => {
-    try {
-      setLoading(true);
-      setError("");
+    const fetchClassDetails = async () => {
+      if (authLoading) return;
 
-      const { data, error } = await supabase
-        .from("classes")
-        .select(`
-          id,
-          weekday,
-          start_time,
-          end_time,
-          room,
-          courses (
-            id,
-            name,
-            code,
-            faculty,
-            color
-          )
-        `)
-        .eq("id", id)
-        .single();
-
-      if (error) {
-        console.error(
-          "Class details error:",
-          error
-        );
-
-        setError(error.message);
+      if (!user?.id || !id) {
+        setClassData(null);
+        setError("Please sign in to view this class.");
+        setLoading(false);
         return;
       }
 
-      setClassData(data as ClassDetailsData);
-    } catch (err) {
-      console.error(
-        "Unexpected error:",
-        err
-      );
+      try {
+        setLoading(true);
+        setError("");
 
-      setError(
-        "Something went wrong."
-      );
-    } finally {
-      setLoading(false);
-    }
-  };
+        // Read class details directly from SQLite.
+        const localSchedule = await getLocalSchedule(user.id);
+
+        if (!active) return;
+
+        const selectedClass =
+          localSchedule.find((item) => item.id === id) ?? null;
+
+        setClassData(selectedClass);
+
+        if (!selectedClass) {
+          setError("Class not found in your local timetable.");
+        }
+      } catch (err) {
+        console.error("Local class details error:", err);
+
+        if (active) {
+          setError("Couldn't load class details.");
+        }
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
+    };
+
+    void fetchClassDetails();
+
+    return () => {
+      active = false;
+    };
+  }, [id, user?.id, authLoading]);
 
   const handleDelete = () => {
     Alert.alert(
@@ -114,41 +96,21 @@ export default function ClassDetails() {
           style: "destructive",
           onPress: deleteClass,
         },
-      ]
+      ],
     );
   };
 
   const deleteClass = async () => {
     try {
-      const { error } = await supabase
-        .from("classes")
-        .delete()
-        .eq("id", id);
-
-      if (error) {
-        console.error(
-          "Delete class error:",
-          error
-        );
-
-        Alert.alert(
-          "Delete Failed",
-          error.message
-        );
-
-        return;
-      }
+      await deleteLocalClass(id);
 
       router.back();
     } catch (err) {
-      console.error(
-        "Unexpected delete error:",
-        err
-      );
+      console.error("Delete class error:", err);
 
       Alert.alert(
         "Delete Failed",
-        "Something went wrong while deleting the class."
+        "Couldn't delete this class. Please try again.",
       );
     }
   };
@@ -167,7 +129,7 @@ export default function ClassDetails() {
     return days[weekday - 1] ?? "Unknown";
   };
 
-  if (loading) {
+  if (authLoading || loading) {
     return (
       <View style={styles.center}>
         <ActivityIndicator
@@ -196,11 +158,7 @@ export default function ClassDetails() {
     );
   }
 
-  const course = Array.isArray(
-    classData.courses
-  )
-    ? classData.courses[0] ?? null
-    : classData.courses;
+  const course = classData.course;
 
   return (
     <View style={styles.container}>
@@ -236,21 +194,21 @@ export default function ClassDetails() {
       )}
 
       <TouchableOpacity
-  style={styles.editButton}
-  activeOpacity={0.8}
-  onPress={() =>
-    router.push({
-      pathname: "/edit-class",
-      params: {
-        id: classData.id,
-      },
-    })
-  }
->
-  <Text style={styles.editButtonText}>
-    Edit Class
-  </Text>
-</TouchableOpacity>
+        style={styles.editButton}
+        activeOpacity={0.8}
+        onPress={() =>
+          router.push({
+            pathname: "/edit-class",
+            params: {
+              id: classData.id,
+            },
+          })
+        }
+      >
+        <Text style={styles.editButtonText}>
+          Edit Class
+        </Text>
+      </TouchableOpacity>
 
       <TouchableOpacity
         style={styles.deleteButton}
@@ -332,19 +290,19 @@ const styles = StyleSheet.create({
   },
 
   editButton: {
-  marginTop: 40,
-  height: 52,
-  borderRadius: 14,
-  backgroundColor: "#8B5CF6",
-  alignItems: "center",
-  justifyContent: "center",
-},
+    marginTop: 40,
+    height: 52,
+    borderRadius: 14,
+    backgroundColor: "#8B5CF6",
+    alignItems: "center",
+    justifyContent: "center",
+  },
 
-editButtonText: {
-  color: "#FFFFFF",
-  fontSize: 15,
-  fontWeight: "700",
-},
+  editButtonText: {
+    color: "#FFFFFF",
+    fontSize: 15,
+    fontWeight: "700",
+  },
 
   deleteButton: {
     marginTop: 40,

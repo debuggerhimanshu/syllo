@@ -27,14 +27,22 @@ class SylloAlarmModule : Module() {
       }
     }
 
-    Function("canUseFullScreenIntent") {
+   Function("canUseFullScreenIntent") {
       val context = appContext.reactContext ?: return@Function false
 
       if (Build.VERSION.SDK_INT >= 34) {
         val manager =
           context.getSystemService(Context.NOTIFICATION_SERVICE)
             as android.app.NotificationManager
-        manager.canUseFullScreenIntent()
+
+        val allowed = manager.canUseFullScreenIntent()
+
+        android.util.Log.i(
+          "SylloAlarm",
+          "Full-screen intent permission allowed: $allowed"
+        )
+
+        allowed
       } else {
         true
       }

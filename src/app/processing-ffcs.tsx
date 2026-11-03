@@ -12,7 +12,16 @@ import {
 import { useLocalSearchParams } from "expo-router";
 import * as Clipboard from "expo-clipboard";
 import { recognizeText } from "expo-ocr-kit";
-import { supabase } from "../lib/supabase";
+
+import { useAuth } from "@/context/AuthContext";
+import {
+  generateLocalId,
+  getLocalCourses,
+  getLocalSchedule,
+  saveLocalCourse,
+  saveLocalClass,
+} from "@/lib/timetable-repository";
+
 import { extractFFCSFromOCRBlocks } from "../lib/ffcs/extractor";
 import { buildParsedCourses } from "../lib/ffcs/parser";
 import type { FFCSOCRBlock } from "../lib/ffcs/extractor";
@@ -27,6 +36,7 @@ const DAYS = [
   "Saturday",
 ];
 export default function ProcessingFFCS() {
+  const { user } = useAuth();
   const { uri, name, mimeType } = useLocalSearchParams<{
     uri?: string;
     name?: string;
@@ -233,224 +243,243 @@ export default function ProcessingFFCS() {
       ]
     );
   };
-  const importTimetable = async () => {
-    if (importing) return;
-    if (!confirmed) {
-      Alert.alert(
-        "Review required",
-        "Please review and confirm your timetable first."
-      );
-      return;
-    }
-    const importableCourses = courses.filter(
-      (course) => course.classes.length > 0
+const importTimetable = async () => {
+  if (importing) return;
+
+  if (!confirmed) {
+    Alert.alert(
+      "Review required",
+      "Please review and confirm your timetable first."
     );
-    const skippedCourses = courses.filter(
-      (course) => course.classes.length === 0
+    return;
+  }
+
+  const importableCourses = courses.filter(
+    (course) => course.classes.length > 0
+  );
+
+  const skippedCourses = courses.filter(
+    (course) => course.classes.length === 0
+  );
+
+  if (importableCourses.length === 0) {
+    Alert.alert(
+      "No classes to import",
+      "No courses contain scheduled classes. Review your extracted timetable first."
     );
-    if (importableCourses.length === 0) {
-      Alert.alert(
-        "No classes to import",
-        "No courses contain scheduled classes. Review your extracted timetable first."
+    return;
+  }
+
+  // Validate the complete batch before making database changes.
+  for (const course of importableCourses) {
+    for (const item of course.classes) {
+      const validStart = /^([01]\d|2[0-3]):[0-5]\d$/.test(
+        item.start_time
       );
-      return;
-    }
-    // Validate the complete batch before making database changes.
-    for (const course of importableCourses) {
-      for (const item of course.classes) {
-        const validStart = /^([01]\d|2[0-3]):[0-5]\d$/.test(
-          item.start_time
-        );
-        const validEnd = /^([01]\d|2[0-3]):[0-5]\d$/.test(
-          item.end_time
-        );
-        if (
-          !Number.isInteger(item.weekday) ||
-          item.weekday < 1 ||
-          item.weekday > 7 ||
-          !validStart ||
-          !validEnd ||
-          item.start_time >= item.end_time ||
-          !item.slot?.trim()
-        ) {
-          Alert.alert(
-            "Invalid class entry",
-            `${course.code} contains an invalid weekday, time, or slot. Correct it before importing.`
-          );
-          return;
-        }
-      }
-    }
-    setImporting(true);
-    setImportComplete(false);
-    let inserted = 0;
-    let skippedDuplicates = 0;
-    const errors: string[] = [];
-    try {
-      const {
-        data: { user },
-        error: authError,
-      } = await supabase.auth.getUser();
-      if (authError || !user) {
+
+      const validEnd = /^([01]\d|2[0-3]):[0-5]\d$/.test(
+        item.end_time
+      );
+
+      if (
+        !Number.isInteger(item.weekday) ||
+        item.weekday < 1 ||
+        item.weekday > 7 ||
+        !validStart ||
+        !validEnd ||
+        item.start_time >= item.end_time ||
+        !item.slot?.trim()
+      ) {
         Alert.alert(
-          "Sign-in required",
-          "Please sign in again before importing your timetable."
+          "Invalid class entry",
+          `${course.code} contains an invalid weekday, time, or slot. Correct it before importing.`
         );
         return;
       }
-      for (const course of importableCourses) {
-        // Only find courses owned by the signed-in user.
-        const { data: matchingCourses, error: courseLookupError } =
-          await supabase
-            .from("courses")
-            .select("id, name, code")
-            .eq("user_id", user.id)
-            .eq("code", course.code)
-            .limit(2);
-        if (courseLookupError) {
-          errors.push(
-            `${course.code}: ${courseLookupError.message}`
-          );
-          continue;
-        }
-        if ((matchingCourses?.length ?? 0) > 1) {
-          errors.push(
-            `${course.code}: multiple matching courses exist. Resolve the duplicates before importing.`
-          );
-          continue;
-        }
-        let courseId: string | undefined =
-          matchingCourses?.[0]?.id;
-        if (!courseId) {
-          const { data: createdCourse, error: createCourseError } =
-            await supabase
-              .from("courses")
-              .insert({
-                user_id: user.id,
-                name: course.name,
-                code: course.code,
-                faculty: course.faculty ?? null,
-                color: "#8B5CF6",
-              })
-              .select("id")
-              .single();
-          if (createCourseError || !createdCourse?.id) {
-            errors.push(
-              `${course.code}: ${
-                createCourseError?.message ??
-                "Could not create the course."
-              }`
-            );
-            continue;
-          }
-          courseId = createdCourse.id;
-        }
-        // Guard against an unresolved course ID before querying/inserting classes.
-        if (!courseId) {
-          errors.push(`${course.code}: could not determine the course ID.`);
-          continue;
-        }
-        const { data: existingClasses, error: classLookupError } =
-          await supabase
-            .from("classes")
-            .select("weekday, start_time, end_time, slot")
-            .eq("course_id", courseId);
-        if (classLookupError) {
-          errors.push(
-            `${course.code}: could not check existing classes: ${classLookupError.message}`
-          );
-          continue;
-        }
-const seenInThisImport = new Set<string>();
-const pendingClasses = course.classes.filter((item) => {
-  const normalizeTime = (value: string) => value.trim().slice(0, 5);
-  const normalizeSlot = (value: string | null | undefined) =>
-    (value ?? "").trim().toUpperCase();
-  const key = [
-    item.weekday,
-    normalizeTime(item.start_time),
-    normalizeTime(item.end_time),
-    normalizeSlot(item.slot),
-  ].join("|");
-  // Skip duplicate entries within this import.
-  if (seenInThisImport.has(key)) {
-    skippedDuplicates += 1;
-    return false;
+    }
   }
-  seenInThisImport.add(key);
-  // Skip classes that already exist in Supabase.
-  const duplicate = (existingClasses ?? []).some(
-    (existing) =>
-      existing.weekday === item.weekday &&
-      normalizeTime(existing.start_time) === normalizeTime(item.start_time) &&
-      normalizeTime(existing.end_time) === normalizeTime(item.end_time) &&
-      normalizeSlot(existing.slot) === normalizeSlot(item.slot)
-  );
-  if (duplicate) {
-    skippedDuplicates += 1;
-    return false;
+
+  if (!user) {
+    Alert.alert(
+      "Sign-in required",
+      "Please sign in again before importing your timetable."
+    );
+    return;
   }
-  return true;
-});
-        if (pendingClasses.length === 0) continue;
-        const rows = pendingClasses.map((item) => ({
-          course_id: courseId,
+
+  setImporting(true);
+  setImportComplete(false);
+
+  let inserted = 0;
+  let skippedDuplicates = 0;
+  const errors: string[] = [];
+
+  const normalizeTime = (value: string) =>
+    value.trim().slice(0, 5);
+
+  const normalizeSlot = (
+    value: string | null | undefined
+  ) => (value ?? "").trim().toUpperCase();
+
+  try {
+    // Load existing timetable from SQLite.
+    const localCourses = await getLocalCourses(user.id);
+    const localSchedule = await getLocalSchedule(user.id);
+
+    // Track existing and newly imported class combinations.
+    const existingClassKeys = new Set(
+      localSchedule.map((item) =>
+        [
+          item.course_id,
+          item.weekday,
+          normalizeTime(item.start_time),
+          normalizeTime(item.end_time),
+          normalizeSlot(item.slot),
+        ].join("|")
+      )
+    );
+
+    for (const course of importableCourses) {
+      // Find an existing course belonging to this user.
+      const matchingCourses = localCourses.filter(
+        (item) => item.code === course.code
+      );
+
+      if (matchingCourses.length > 1) {
+        errors.push(
+          `${course.code}: multiple matching courses exist. Resolve the duplicates before importing.`
+        );
+        continue;
+      }
+
+      let localCourse = matchingCourses[0];
+
+      // Create the course locally if it doesn't exist.
+      if (!localCourse) {
+        localCourse = {
+          id: generateLocalId(),
+          user_id: user.id,
+          name: course.name,
+          code: course.code,
+          faculty: course.faculty ?? null,
+          color: "#8B5CF6",
+        };
+
+        try {
+          await saveLocalCourse(localCourse);
+
+          // Keep the in-memory list updated.
+          localCourses.push(localCourse);
+        } catch (error) {
+          errors.push(
+            `${course.code}: ${
+              error instanceof Error
+                ? error.message
+                : "Could not save course locally."
+            }`
+          );
+          continue;
+        }
+      }
+
+      const seenInThisImport = new Set<string>();
+
+      for (const item of course.classes) {
+        const key = [
+          localCourse.id,
+          item.weekday,
+          normalizeTime(item.start_time),
+          normalizeTime(item.end_time),
+          normalizeSlot(item.slot),
+        ].join("|");
+
+        // Skip duplicates within this import.
+        if (seenInThisImport.has(key)) {
+          skippedDuplicates++;
+          continue;
+        }
+
+        seenInThisImport.add(key);
+
+        // Skip classes already stored locally.
+        if (existingClassKeys.has(key)) {
+          skippedDuplicates++;
+          continue;
+        }
+
+        const newClass = {
+          id: generateLocalId(),
+          course_id: localCourse.id,
           weekday: item.weekday,
           start_time: item.start_time,
           end_time: item.end_time,
           room: item.room ?? null,
           slot: item.slot,
-        }));
-        const { data: insertedRows, error: insertError } =
-        await supabase
-          .from("classes")
-          .upsert(rows, {
-            onConflict:
-              "course_id,weekday,start_time,end_time,slot,valid_from,valid_until",
-            ignoreDuplicates: true,
-          })
-          .select("id");
-        if (insertError) {
+          valid_from: null,
+          valid_until: null,
+        };
+
+        try {
+          // Save locally and automatically queue cloud synchronization.
+          await saveLocalClass(newClass);
+
+          inserted++;
+          existingClassKeys.add(key);
+        } catch (error) {
           errors.push(
-            `${course.code}: failed to insert classes: ${insertError.message}`
+            `${course.code}: failed to save class ${
+              item.slot
+            } - ${
+              error instanceof Error
+                ? error.message
+                : "Unknown local database error."
+            }`
           );
-          continue;
         }
-        inserted += insertedRows?.length ?? rows.length;
       }
-      setImportComplete(errors.length === 0);
-      const summary = [
-        `New classes imported: ${inserted}`,
-        `Existing duplicates skipped: ${skippedDuplicates}`,
-        `Courses without classes skipped: ${skippedCourses.length}`,
-        `Errors: ${errors.length}`,
-      ].join("\n");
-      setStatus(
-        errors.length === 0
-          ? "Timetable import completed."
-          : "Timetable import completed with some errors."
-      );
-      Alert.alert(
-        errors.length === 0 ? "Import successful" : "Import finished with errors",
-        `${summary}${
-          errors.length > 0
-            ? `\n\n${errors.slice(0, 5).join("\n")}`
-            : ""
-        }`
-      );
-    } catch (error) {
-      console.error("FFCS import error:", error);
-      setStatus("An unexpected error occurred during import.");
-      Alert.alert(
-        "Import failed",
-        error instanceof Error
-          ? error.message
-          : "An unexpected error occurred."
-      );
-    } finally {
-      setImporting(false);
     }
-  };
+
+    setImportComplete(errors.length === 0);
+
+    const summary = [
+      `New classes imported: ${inserted}`,
+      `Existing duplicates skipped: ${skippedDuplicates}`,
+      `Courses without classes skipped: ${skippedCourses.length}`,
+      `Errors: ${errors.length}`,
+    ].join("\n");
+
+    setStatus(
+      errors.length === 0
+        ? "Timetable import completed."
+        : "Timetable import completed with some errors."
+    );
+
+    Alert.alert(
+      errors.length === 0
+        ? "Import successful"
+        : "Import finished with errors",
+      `${summary}${
+        errors.length > 0
+          ? `\n\n${errors.slice(0, 5).join("\n")}`
+          : ""
+      }`
+    );
+  } catch (error) {
+    console.error("FFCS local import error:", error);
+
+    setStatus("An unexpected error occurred during import.");
+
+    Alert.alert(
+      "Import failed",
+      error instanceof Error
+        ? error.message
+        : "An unexpected error occurred."
+    );
+  } finally {
+    setImporting(false);
+  }
+};
+
     return (
     <ScrollView
       style={styles.container}

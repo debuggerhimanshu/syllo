@@ -1,3 +1,4 @@
+
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -13,47 +14,26 @@ import {
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { router, useLocalSearchParams } from "expo-router";
 
-import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/context/AuthContext";
 
-type Course = {
-  id: string;
-  name: string;
-  code: string | null;
-};
+import {
+  getLocalCourses,
+  getLocalSchedule,
+  saveLocalClass,
+  type LocalCourse,
+  type LocalClass,
+} from "@/lib/timetable-repository";
 
-type ClassData = {
-  id: string;
-  course_id: string;
-  weekday: number;
-  start_time: string;
-  end_time: string;
-  room: string | null;
-};
-
-type ConflictClass = {
-  id: string;
-  weekday: number;
-  start_time: string;
-  end_time: string;
-  room: string | null;
-  courses:
-    | {
-        id: string;
-        name: string;
-        code: string | null;
-      }
-    | {
-        id: string;
-        name: string;
-        code: string | null;
-      }[]
-    | null;
-};
+type Course = LocalCourse;
 
 export default function EditClass() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const { user, loading: authLoading } = useAuth();
 
   const [courses, setCourses] = useState<Course[]>([]);
+  const [existingClass, setExistingClass] =
+    useState<LocalClass | null>(null);
+
   const [courseId, setCourseId] = useState("");
   const [weekday, setWeekday] = useState(1);
 
@@ -78,95 +58,93 @@ export default function EditClass() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    loadData();
-  }, [id]);
+    let active = true;
 
-  const loadData = async () => {
-    try {
-      setLoading(true);
-      setError("");
+    const loadData = async () => {
+      if (authLoading) return;
 
-      const [
-        { data: coursesData, error: coursesError },
-        { data: classData, error: classError },
-      ] = await Promise.all([
-        supabase
-          .from("courses")
-          .select("id, name, code")
-          .order("name"),
-
-        supabase
-          .from("classes")
-          .select(
-            "id, course_id, weekday, start_time, end_time, room"
-          )
-          .eq("id", id)
-          .single(),
-      ]);
-
-      if (coursesError) {
-        setError(coursesError.message);
+      if (!user?.id || !id) {
+        setError("Please sign in to edit this class.");
+        setLoading(false);
         return;
       }
 
-      if (classError) {
-        setError(classError.message);
-        return;
+      try {
+        setLoading(true);
+        setError("");
+
+        // Load courses and timetable from SQLite.
+        const [coursesData, scheduleData] = await Promise.all([
+          getLocalCourses(user.id),
+          getLocalSchedule(user.id),
+        ]);
+
+        if (!active) return;
+
+        const selectedClass = scheduleData.find(
+          (item) => item.id === id
+        );
+
+        if (!selectedClass) {
+          setError("Class not found in your local timetable.");
+          return;
+        }
+
+        setCourses(coursesData);
+        setExistingClass({
+          id: selectedClass.id,
+          course_id: selectedClass.course_id,
+          weekday: selectedClass.weekday,
+          start_time: selectedClass.start_time,
+          end_time: selectedClass.end_time,
+          room: selectedClass.room,
+          slot: selectedClass.slot,
+          valid_from: selectedClass.valid_from,
+          valid_until: selectedClass.valid_until,
+        });
+
+        setCourseId(selectedClass.course_id);
+        setWeekday(selectedClass.weekday);
+        setRoom(selectedClass.room ?? "");
+
+        const [startHour, startMinute] =
+          selectedClass.start_time
+            .slice(0, 5)
+            .split(":")
+            .map(Number);
+
+        const [endHour, endMinute] =
+          selectedClass.end_time
+            .slice(0, 5)
+            .split(":")
+            .map(Number);
+
+        setStartTime(
+          new Date(2026, 0, 1, startHour, startMinute)
+        );
+
+        setEndTime(
+          new Date(2026, 0, 1, endHour, endMinute)
+        );
+      } catch (err) {
+        console.error("Edit class loading error:", err);
+
+        if (active) {
+          setError("Something went wrong while loading the class.");
+        }
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
       }
+    };
 
-      setCourses(coursesData ?? []);
+    void loadData();
 
-      const existingClass =
-        classData as ClassData;
-
-      setCourseId(existingClass.course_id);
-      setWeekday(existingClass.weekday);
-      setRoom(existingClass.room ?? "");
-
-      const [startHour, startMinute] =
-        existingClass.start_time
-          .slice(0, 5)
-          .split(":")
-          .map(Number);
-
-      const [endHour, endMinute] =
-        existingClass.end_time
-          .slice(0, 5)
-          .split(":")
-          .map(Number);
-
-      setStartTime(
-        new Date(
-          2026,
-          0,
-          1,
-          startHour,
-          startMinute
-        )
-      );
-
-      setEndTime(
-        new Date(
-          2026,
-          0,
-          1,
-          endHour,
-          endMinute
-        )
-      );
-    } catch (err) {
-      console.error(
-        "Edit class loading error:",
-        err
-      );
-
-      setError(
-        "Something went wrong while loading the class."
-      );
-    } finally {
-      setLoading(false);
-    }
-  };
+    return () => {
+      active = false;
+    };
+  }, [id, user?.id, authLoading]);
 
   const timeToMinutes = (time: string) => {
     const [hours, minutes] = time
@@ -178,6 +156,11 @@ export default function EditClass() {
   };
 
   const saveChanges = async () => {
+    if (!user?.id || !existingClass) {
+      Alert.alert("Error", "Class information is unavailable.");
+      return;
+    }
+
     if (!courseId) {
       Alert.alert(
         "Missing Course",
@@ -205,73 +188,28 @@ export default function EditClass() {
     try {
       setSaving(true);
 
-      const {
-        data: existingClassesData,
-        error: conflictError,
-      } = await supabase
-        .from("classes")
-        .select(
-          `
-            id,
-            weekday,
-            start_time,
-            end_time,
-            room,
-            courses (
-              id,
-              name,
-              code
-            )
-          `
-        )
-        .eq("weekday", weekday)
-        .neq("id", id);
+      // Check timetable conflicts using local SQLite data.
+      const localSchedule = await getLocalSchedule(user.id);
 
-      if (conflictError) {
-        Alert.alert(
-          "Error",
-          conflictError.message
-        );
-        return;
-      }
-
-      const existingClasses =
-        (existingClassesData ??
-          []) as ConflictClass[];
-
-      const conflictingClass =
-        existingClasses.find(
-          (existingClass) => {
-            const existingStart =
-              timeToMinutes(
-                existingClass.start_time
-              );
-
-            const existingEnd =
-              timeToMinutes(
-                existingClass.end_time
-              );
-
-            return (
-              newStartMinutes <
-                existingEnd &&
-              newEndMinutes >
-                existingStart
-            );
+      const conflictingClass = localSchedule.find(
+        (item) => {
+          if (item.id === id || item.weekday !== weekday) {
+            return false;
           }
-        );
+
+          const existingStart = timeToMinutes(item.start_time);
+          const existingEnd = timeToMinutes(item.end_time);
+
+          return (
+            newStartMinutes < existingEnd &&
+            newEndMinutes > existingStart
+          );
+        }
+      );
 
       if (conflictingClass) {
-        const conflictingCourse =
-          Array.isArray(
-            conflictingClass.courses
-          )
-            ? conflictingClass.courses[0]
-            : conflictingClass.courses;
-
         const courseName =
-          conflictingCourse?.name ??
-          "Another class";
+          conflictingClass.course?.name ?? "Another class";
 
         Alert.alert(
           "Class Conflict",
@@ -282,37 +220,24 @@ export default function EditClass() {
       }
 
       const formatTime = (date: Date) => {
-        const hours = String(
-          date.getHours()
-        ).padStart(2, "0");
-
-        const minutes = String(
-          date.getMinutes()
-        ).padStart(2, "0");
+        const hours = String(date.getHours()).padStart(2, "0");
+        const minutes = String(date.getMinutes()).padStart(2, "0");
 
         return `${hours}:${minutes}:00`;
       };
 
-      const {
-        error: updateError,
-      } = await supabase
-        .from("classes")
-        .update({
-          course_id: courseId,
-          weekday,
-          start_time: formatTime(startTime),
-          end_time: formatTime(endTime),
-          room: room.trim() || null,
-        })
-        .eq("id", id);
-
-      if (updateError) {
-        Alert.alert(
-          "Update Failed",
-          updateError.message
-        );
-        return;
-      }
+      // Save locally first and queue the change for cloud sync.
+      await saveLocalClass({
+        id: existingClass.id,
+        course_id: courseId,
+        weekday,
+        start_time: formatTime(startTime),
+        end_time: formatTime(endTime),
+        room: room.trim() || null,
+        slot: existingClass.slot,
+        valid_from: existingClass.valid_from,
+        valid_until: existingClass.valid_until,
+      });
 
       Alert.alert(
         "Class Updated",
@@ -325,10 +250,7 @@ export default function EditClass() {
         ]
       );
     } catch (err) {
-      console.error(
-        "Update class error:",
-        err
-      );
+      console.error("Update class error:", err);
 
       Alert.alert(
         "Error",
@@ -353,13 +275,10 @@ export default function EditClass() {
     return days[day - 1] ?? "Unknown";
   };
 
-  if (loading) {
+  if (authLoading || loading) {
     return (
       <View style={styles.center}>
-        <ActivityIndicator
-          size="large"
-          color="#8B5CF6"
-        />
+        <ActivityIndicator size="large" color="#8B5CF6" />
 
         <Text style={styles.loadingText}>
           Loading class...
@@ -404,27 +323,22 @@ export default function EditClass() {
 
       <View style={styles.courseList}>
         {courses.map((course) => {
-          const selected =
-            course.id === courseId;
+          const selected = course.id === courseId;
 
           return (
             <TouchableOpacity
               key={course.id}
               style={[
                 styles.courseOption,
-                selected &&
-                  styles.courseOptionSelected,
+                selected && styles.courseOptionSelected,
               ]}
               activeOpacity={0.8}
-              onPress={() =>
-                setCourseId(course.id)
-              }
+              onPress={() => setCourseId(course.id)}
             >
               <Text
                 style={[
                   styles.courseName,
-                  selected &&
-                    styles.courseNameSelected,
+                  selected && styles.courseNameSelected,
                 ]}
               >
                 {course.name}
@@ -451,40 +365,30 @@ export default function EditClass() {
         showsHorizontalScrollIndicator={false}
         style={styles.dayScroll}
       >
-        {[1, 2, 3, 4, 5, 6, 7].map(
-          (day) => {
-            const selected =
-              weekday === day;
+        {[1, 2, 3, 4, 5, 6, 7].map((day) => {
+          const selected = weekday === day;
 
-            return (
-              <TouchableOpacity
-                key={day}
+          return (
+            <TouchableOpacity
+              key={day}
+              style={[
+                styles.dayButton,
+                selected && styles.dayButtonSelected,
+              ]}
+              activeOpacity={0.8}
+              onPress={() => setWeekday(day)}
+            >
+              <Text
                 style={[
-                  styles.dayButton,
-                  selected &&
-                    styles.dayButtonSelected,
+                  styles.dayText,
+                  selected && styles.dayTextSelected,
                 ]}
-                activeOpacity={0.8}
-                onPress={() =>
-                  setWeekday(day)
-                }
               >
-                <Text
-                  style={[
-                    styles.dayText,
-                    selected &&
-                      styles.dayTextSelected,
-                  ]}
-                >
-                  {getDayName(day).slice(
-                    0,
-                    3
-                  )}
-                </Text>
-              </TouchableOpacity>
-            );
-          }
-        )}
+                {getDayName(day).slice(0, 3)}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
       </ScrollView>
 
       {/* Start Time */}
@@ -496,9 +400,7 @@ export default function EditClass() {
       <TouchableOpacity
         style={styles.timeButton}
         activeOpacity={0.8}
-        onPress={() =>
-          setShowStartPicker(true)
-        }
+        onPress={() => setShowStartPicker(true)}
       >
         <Text style={styles.timeText}>
           {startTime.toLocaleTimeString([], {
@@ -513,15 +415,8 @@ export default function EditClass() {
           value={startTime}
           mode="time"
           is24Hour={false}
-          display={
-            Platform.OS === "ios"
-              ? "spinner"
-              : "default"
-          }
-          onChange={(
-            _,
-            selectedDate
-          ) => {
+          display={Platform.OS === "ios" ? "spinner" : "default"}
+          onChange={(_, selectedDate) => {
             setShowStartPicker(false);
 
             if (selectedDate) {
@@ -540,9 +435,7 @@ export default function EditClass() {
       <TouchableOpacity
         style={styles.timeButton}
         activeOpacity={0.8}
-        onPress={() =>
-          setShowEndPicker(true)
-        }
+        onPress={() => setShowEndPicker(true)}
       >
         <Text style={styles.timeText}>
           {endTime.toLocaleTimeString([], {
@@ -557,15 +450,8 @@ export default function EditClass() {
           value={endTime}
           mode="time"
           is24Hour={false}
-          display={
-            Platform.OS === "ios"
-              ? "spinner"
-              : "default"
-          }
-          onChange={(
-            _,
-            selectedDate
-          ) => {
+          display={Platform.OS === "ios" ? "spinner" : "default"}
+          onChange={(_, selectedDate) => {
             setShowEndPicker(false);
 
             if (selectedDate) {
@@ -594,17 +480,14 @@ export default function EditClass() {
       <TouchableOpacity
         style={[
           styles.saveButton,
-          saving &&
-            styles.saveButtonDisabled,
+          saving && styles.saveButtonDisabled,
         ]}
         activeOpacity={0.8}
         disabled={saving}
         onPress={saveChanges}
       >
         {saving ? (
-          <ActivityIndicator
-            color="#FFFFFF"
-          />
+          <ActivityIndicator color="#FFFFFF" />
         ) : (
           <Text style={styles.saveButtonText}>
             Save Changes
