@@ -1,6 +1,9 @@
 
 import * as Crypto from "expo-crypto";
-import { getDatabase } from "@/lib/database";
+import {
+  getDatabase,
+  withSerializedTransaction,
+} from "@/lib/database";
 
 export type LocalCourse = {
   id: string;
@@ -187,7 +190,7 @@ export async function saveLocalCourse(
 ) {
   const db = await getDatabase();
 
-  await db.withTransactionAsync(async () => {
+  await withSerializedTransaction(async () => {
     const existing = await db.getFirstAsync<{ id: string }>(
       `SELECT id FROM courses WHERE id = ?`,
       course.id,
@@ -238,7 +241,7 @@ export async function saveLocalClass(
 ) {
   const db = await getDatabase();
 
-  await db.withTransactionAsync(async () => {
+  await withSerializedTransaction(async () => {
     const existing = await db.getFirstAsync<{ id: string }>(
       `SELECT id FROM classes WHERE id = ?`,
       classItem.id,
@@ -296,7 +299,7 @@ export async function deleteLocalClass(
 ) {
   const db = await getDatabase();
 
-  await db.withTransactionAsync(async () => {
+  await withSerializedTransaction(async () => {
     const classItem = await db.getFirstAsync<LocalClass>(
       `SELECT
         id,
@@ -379,7 +382,7 @@ export async function saveRemoteSchedule(
 ) {
   const db = await getDatabase();
 
-  await db.withTransactionAsync(async () => {
+  await withSerializedTransaction(async () => {
     await db.execAsync(`
       CREATE TEMP TABLE IF NOT EXISTS remote_schedule_class_ids (
         id TEXT PRIMARY KEY NOT NULL

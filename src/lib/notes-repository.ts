@@ -1,6 +1,9 @@
 
 import * as SQLite from "expo-sqlite";
-import { getDatabase } from "@/lib/database";
+import {
+  getDatabase,
+  withSerializedTransaction,
+} from "@/lib/database";
 
 export type NotePriority = "low" | "medium" | "high";
 
@@ -167,7 +170,7 @@ export async function saveLocalNote(
 
   
 
-  await db.withTransactionAsync(async () => {
+  await withSerializedTransaction(async () => {
     const existing = await db.getFirstAsync<{
       id: string;
       user_id: string;
@@ -250,7 +253,7 @@ export async function saveRemoteNotes(
 ): Promise<void> {
   const db = await getDatabase();
 
-  await db.withTransactionAsync(async () => {
+  await withSerializedTransaction(async () => {
     for (const note of remoteNotes) {
       await db.runAsync(
         `INSERT INTO notes (
@@ -294,7 +297,7 @@ export async function deleteLocalNote(
 ): Promise<void> {
   const db = await getDatabase();
 
-  await db.withTransactionAsync(async () => {
+  await withSerializedTransaction(async () => {
     const note = await db.getFirstAsync<any>(
       `SELECT *
        FROM notes
@@ -430,7 +433,7 @@ export async function saveLocalAttachment(
     created_at: createdAt,
   };
 
-  await db.withTransactionAsync(async () => {
+  await withSerializedTransaction(async () => {
     await db.runAsync(
       `INSERT INTO note_attachments (
         id, note_id, user_id, local_uri, storage_path,
@@ -479,7 +482,7 @@ export async function updateLocalAttachmentUpload(
 ): Promise<void> {
   const db = await getDatabase();
 
-  await db.withTransactionAsync(async () => {
+  await withSerializedTransaction(async () => {
     await db.runAsync(
       `UPDATE note_attachments
        SET storage_path = ?,
@@ -506,7 +509,7 @@ export async function deleteLocalAttachment(
 ): Promise<void> {
   const db = await getDatabase();
 
-  await db.withTransactionAsync(async () => {
+  await withSerializedTransaction(async () => {
     const attachment =
       await db.getFirstAsync<LocalNoteAttachment>(
         `SELECT *
