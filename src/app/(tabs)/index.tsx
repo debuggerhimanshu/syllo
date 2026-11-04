@@ -4,7 +4,6 @@ import {
   Alert,
   Platform,
   RefreshControl,
-  SafeAreaView,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -16,6 +15,7 @@ import {
 import { Redirect, router, useFocusEffect } from "expo-router";
 import { useAuth } from "@/context/AuthContext";
 import { supabase } from "@/lib/supabase";
+
 import {
   getClassAlarmSettings,
   saveClassAlarmSettings,
@@ -23,6 +23,7 @@ import {
 } from "@/lib/alarm-settings";
 import { getLocalSchedule } from "@/lib/timetable-repository";
 import { syncClassAlarms } from "@/lib/class-alarms";
+import ScrollFade from "@/components/scroll-fade";
 
 type Course = {
   id: string;
@@ -300,14 +301,14 @@ const toggleClassAlarm = useCallback(async (classId: string) => {
   const featuredClass = currentClass ?? nextClass;
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <StatusBar
-        barStyle="light-content"
-        backgroundColor={COLORS.background}
-        translucent={false}
-      />
+  <View style={styles.safeArea}>
+    <StatusBar
+      barStyle="light-content"
+      backgroundColor="transparent"
+      translucent={true}
+    />
 
-      <ScrollContent
+    <ScrollContent
         fetching={fetching}
         refreshing={refreshing}
         error={error}
@@ -323,7 +324,7 @@ const toggleClassAlarm = useCallback(async (classId: string) => {
         savingAlarmId={savingAlarmId}
         onToggleAlarm={toggleClassAlarm}
       />
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -360,18 +361,22 @@ function ScrollContent({
 }) {
 const [profileMenuVisible, setProfileMenuVisible] = useState(false);
   return (
-    <View style={styles.screen}
-    >
-      <ScrollView
-        contentContainerStyle={styles.content}
+  <ScrollFade
+  style={styles.screen}
+  gradientColors={[
+    "rgba(139, 92, 246, 0.20)",
+    "rgba(99, 65, 180, 0.08)",
+    "rgba(8, 9, 13, 0)",
+  ]}
+>
+  <ScrollView
+    contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}
-            tintColor={COLORS.purple}
-            colors={[COLORS.purple]}
-            progressBackgroundColor={COLORS.card}
+            tintColor="#8B5CF6"
           />
         }
       >
@@ -758,8 +763,8 @@ const [profileMenuVisible, setProfileMenuVisible] = useState(false);
   </TouchableOpacity>
 </Modal>
 
-      </ScrollView>
-    </View>
+        </ScrollView>
+</ScrollFade>
   );
 }
 
@@ -768,17 +773,27 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: COLORS.background,
   },
+
+  topGradient: {
+  position: "absolute",
+  top: 0,
+  left: 0,
+  right: 0,
+  height: 180,
+  zIndex: 0,
+},
   screen: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-    paddingTop:
-      Platform.OS === "android" ? StatusBar.currentHeight ?? 0 : 0,
-  },
+  flex: 1,
+  backgroundColor: COLORS.background,
+},
   content: {
-    paddingHorizontal: 20,
-    paddingTop: 24,
-    paddingBottom: 36,
-  },
+  paddingHorizontal: 20,
+  paddingTop:
+    Platform.OS === "android"
+      ? (StatusBar.currentHeight ?? 0) + 24
+      : 24,
+  paddingBottom: 36,
+},
   center: {
     flex: 1,
     backgroundColor: COLORS.background,

@@ -37,6 +37,8 @@ import { syncPendingNotes } from "@/lib/sync-engine";
 
 import { syncClassAlarms } from "@/lib/class-alarms";
 import { getClassAlarmSettings } from "@/lib/alarm-settings";
+import { StatusBar } from "react-native";
+import ScrollFade from "@/components/scroll-fade";
 
 type Course = {
   id: string;
@@ -506,6 +508,12 @@ useEffect(() => {
   }
 
   return (
+  <ScrollFade style={styles.container}>
+    <StatusBar
+      barStyle="light-content"
+      backgroundColor="transparent"
+      translucent={true}
+    />
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.content}
@@ -686,8 +694,9 @@ useEffect(() => {
   </TouchableOpacity>
 ))
       )}
-    </ScrollView>
-  );
+        </ScrollView>
+  </ScrollFade>
+);
 }
 
 const styles = StyleSheet.create({

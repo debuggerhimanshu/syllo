@@ -22,6 +22,7 @@ import {
 
 import { saveLocalCourse } from "@/lib/timetable-repository";
 import { syncPendingNotes } from "@/lib/sync-engine";
+import ScrollFade from "@/components/scroll-fade";
 
 type Course = {
   id: string;
@@ -326,8 +327,8 @@ const loadNotes = useCallback(async (showLoader = false) => {
   };
 
   return (
-    <View style={styles.container}>
-      <ScrollView
+  <ScrollFade style={styles.container}>
+    <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.page}
         keyboardShouldPersistTaps="handled"
@@ -566,8 +567,8 @@ const loadNotes = useCallback(async (showLoader = false) => {
             )}
           </>
         )}
-      </ScrollView>
-    </View>
+          </ScrollView>
+  </ScrollFade>
   );
 }
 
