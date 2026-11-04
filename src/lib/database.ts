@@ -157,6 +157,62 @@ export async function getDatabase() {
     ON note_attachments(upload_status);
 
     -- =========================================
+    -- TASKS TABLE
+    -- =========================================
+
+    CREATE TABLE IF NOT EXISTS tasks (
+      id TEXT PRIMARY KEY NOT NULL,
+      user_id TEXT NOT NULL,
+
+      title TEXT NOT NULL,
+      description TEXT DEFAULT '',
+
+      category TEXT NOT NULL DEFAULT 'academic',
+      task_type TEXT NOT NULL DEFAULT 'other',
+
+      course_id TEXT,
+
+      status TEXT NOT NULL DEFAULT 'todo',
+      priority TEXT NOT NULL DEFAULT 'medium',
+      priority_mode TEXT NOT NULL DEFAULT 'manual',
+
+      energy_level TEXT NOT NULL DEFAULT 'medium',
+
+      due_at TEXT,
+      reminder_at TEXT,
+      reminder_enabled INTEGER NOT NULL DEFAULT 0,
+
+      estimated_minutes INTEGER DEFAULT 30,
+      postponed_count INTEGER NOT NULL DEFAULT 0,
+      postpone_reason TEXT,
+
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      completed_at TEXT,
+
+      sync_status TEXT NOT NULL DEFAULT 'pending',
+
+      FOREIGN KEY (course_id)
+        REFERENCES courses(id)
+        ON DELETE SET NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_tasks_user_id
+    ON tasks(user_id);
+
+    CREATE INDEX IF NOT EXISTS idx_tasks_course_id
+    ON tasks(course_id);
+
+    CREATE INDEX IF NOT EXISTS idx_tasks_due_at
+    ON tasks(due_at);
+
+    CREATE INDEX IF NOT EXISTS idx_tasks_status
+    ON tasks(status);
+
+    CREATE INDEX IF NOT EXISTS idx_tasks_sync_status
+    ON tasks(sync_status);
+
+    -- =========================================
     -- BACKGROUND SYNC QUEUE
     -- =========================================
 

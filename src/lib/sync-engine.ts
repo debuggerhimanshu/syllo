@@ -17,6 +17,12 @@ import {
   type LocalCourse,
   type LocalClass,
 } from "@/lib/timetable-repository";
+import {
+  getPendingTaskSyncOperations,
+  markTaskSyncComplete,
+  markTaskSyncFailed,
+  type Task,
+} from "@/lib/tasks-repository";
 
 type NoteSyncPayload = {
   id: string;
@@ -331,6 +337,136 @@ type TimetableSyncPayload =
 
 }
 
+
+// =========================================
+// TASK SYNC
+// =========================================
+
+async function syncPendingTasks(userId: string): Promise<void> {
+  const operations = await getPendingTaskSyncOperations();
+
+  for (const operation of operations) {
+    if (!["insert", "update", "delete"].includes(operation.operation)) {
+      continue;
+    }
+
+    try {
+      if (!operation.payload) {
+        throw new Error("Task sync payload is missing.");
+      }
+
+      const payload = JSON.parse(operation.payload) as Task;
+
+      // Validate task identity and ownership.
+      if (
+        payload.id !== operation.entity_id ||
+        payload.user_id !== userId
+      ) {
+        throw new Error("Task ownership validation failed.");
+      }
+
+      // -------------------------------------
+      // DELETE TASK
+      // -------------------------------------
+
+      if (operation.operation === "delete") {
+        const { error } = await supabase
+          .from("tasks")
+          .delete()
+          .eq("id", payload.id)
+          .eq("user_id", userId);
+
+        if (error) throw error;
+
+        await markTaskSyncComplete(
+          operation.id,
+          payload.id,
+          "delete"
+        );
+
+        console.log(`Task deletion synchronized: ${payload.id}`);
+        continue;
+      }
+
+      // -------------------------------------
+      // VERIFY PARENT COURSE
+      // -------------------------------------
+
+      if (payload.course_id) {
+        const { data: course, error: courseError } = await supabase
+          .from("courses")
+          .select("id")
+          .eq("id", payload.course_id)
+          .eq("user_id", userId)
+          .maybeSingle();
+
+        if (courseError) throw courseError;
+
+        if (!course) {
+          throw new Error(
+            "Task's parent course is missing or does not belong to this user."
+          );
+        }
+      }
+
+      // -------------------------------------
+      // CREATE / UPDATE TASK
+      // -------------------------------------
+
+      const { error } = await supabase
+        .from("tasks")
+        .upsert(
+          {
+            id: payload.id,
+            user_id: userId,
+            title: payload.title,
+            description: payload.description,
+            category: payload.category,
+            task_type: payload.task_type,
+            course_id: payload.course_id,
+            status: payload.status,
+            priority: payload.priority,
+            priority_mode: payload.priority_mode,
+            energy_level: payload.energy_level,
+            due_at: payload.due_at,
+            reminder_at: payload.reminder_at,
+            reminder_enabled: Boolean(payload.reminder_enabled),
+            estimated_minutes: payload.estimated_minutes,
+            postponed_count: payload.postponed_count,
+            postpone_reason: payload.postpone_reason,
+            created_at: payload.created_at,
+            updated_at: payload.updated_at,
+            completed_at: payload.completed_at,
+          },
+          { onConflict: "id" }
+        );
+
+      if (error) throw error;
+
+      await markTaskSyncComplete(
+        operation.id,
+        payload.id,
+        operation.operation
+      );
+
+      console.log(`Task synchronized: ${payload.id}`);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Unknown task synchronization error.";
+
+      console.error(
+        `Task sync failed (${operation.entity_id}):`,
+        message
+      );
+
+      await markTaskSyncFailed(operation.id, message);
+    }
+  }
+}
+
+
 let isSyncing = false;
 
 export async function syncPendingNotes(): Promise<void> {
@@ -352,9 +488,13 @@ export async function syncPendingNotes(): Promise<void> {
   throw new Error("No authenticated user available for sync.");
 }
 
-// Sync timetable before notes and attachments.
+// Sync timetable before tasks.
 await syncPendingTimetable(user.id);
 
+// Sync tasks after their parent courses are available.
+await syncPendingTasks(user.id);
+
+// Sync notes and attachments.
 const operations = await getPendingNoteSyncOperations();
 
     // =========================================

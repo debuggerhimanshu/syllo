@@ -64,6 +64,7 @@ export default function RootLayout() {
     );
   }
 
+  
   return (
     <AuthProvider>
       <Stack
@@ -76,6 +77,7 @@ export default function RootLayout() {
         }}
       >
         <Stack.Screen name="(tabs)" />
+
         <Stack.Screen
           name="note-editor"
           options={{
@@ -83,7 +85,29 @@ export default function RootLayout() {
             animation: "slide_from_right",
           }}
         />
+
+        <Stack.Screen
+          name="task-create"
+          options={{
+            headerShown: false,
+            animation: "slide_from_right",
+            presentation: "card",
+          }}
+        />
+
+        <Stack.Screen
+          name="task-details"
+          options={{
+            headerShown: false,
+            animation: "slide_from_right",
+            presentation: "card",
+            contentStyle: {
+              backgroundColor: "#08090D",
+            },
+          }}
+        />
       </Stack>
     </AuthProvider>
   );
+
 }
