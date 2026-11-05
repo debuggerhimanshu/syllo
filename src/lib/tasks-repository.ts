@@ -4,6 +4,7 @@ import {
   getDatabase,
   withSerializedTransaction,
 } from "@/lib/database";
+import { scheduleTaskReminder } from "@/lib/notifications";
 
 // =========================================
 // TYPES
@@ -337,6 +338,35 @@ export async function updateLocalTask(
       hasPendingInsert || hasPendingDelete ? "insert" : "update",
       JSON.stringify(updated)
     );
+  });
+}
+
+// =========================================
+// POSTPONE TASK
+// =========================================
+
+export async function postponeLocalTask(
+  userId: string,
+  taskId: string,
+  reason: string | null,
+  newDueAt?: string | null
+): Promise<void> {
+  const db = await getDatabase();
+
+  const existing = await db.getFirstAsync<Task>(
+    `SELECT * FROM tasks WHERE id = ? AND user_id = ?`,
+    taskId,
+    userId
+  );
+
+  if (!existing) {
+    throw new Error("Task not found.");
+  }
+
+  await updateLocalTask(userId, taskId, {
+    postponed_count: existing.postponed_count + 1,
+    postpone_reason: reason,
+    ...(newDueAt !== undefined ? { due_at: newDueAt } : {}),
   });
 }
 

@@ -29,6 +29,8 @@ import {
 
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import ScrollFade from "@/components/scroll-fade";
+import { scheduleTaskReminder } from "@/lib/notifications";
+import { calculateTaskPriority } from "@/lib/priority-engine";
 
 const COLORS = {
   background: "#0A0A0F",
@@ -54,7 +56,12 @@ export default function TaskCreateScreen() {
 
   const [priority, setPriority] =
     useState<TaskPriority>("medium");
+  
+  
+  const [priorityMode, setPriorityMode] =
+  useState<"manual" | "automatic">("automatic");
 
+  
   const [energy, setEnergy] =
     useState<TaskEnergy>("medium");
 
@@ -64,6 +71,12 @@ export default function TaskCreateScreen() {
 
   const [coursePickerOpen, setCoursePickerOpen] = useState(false);
   const [dueDate, setDueDate] = useState<Date | null>(null);
+
+  const livePriority = calculateTaskPriority({
+  category,
+  due_at: dueDate?.toISOString() ?? null,
+  estimated_minutes: 30,
+  });
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
 
@@ -174,14 +187,22 @@ export default function TaskCreateScreen() {
     setSaving(true);
 
     try {
-      await createLocalTask(user.id, {
+      const priorityResult = calculateTaskPriority({
+        category,
+        due_at: dueDate?.toISOString() ?? null,
+        estimated_minutes: 30,
+      });
+      const createdTask = await createLocalTask(user.id, {
         title: title.trim(),
         description: description.trim(),
         category,
         task_type: "other",
         course_id: category === "academic" ? selectedCourse : null,
-        priority,
-        priority_mode: "manual",
+        priority:
+          priorityMode === "automatic"
+            ? priorityResult.priority
+            : priority,
+        priority_mode: priorityMode,
         energy_level: energy,
         due_at: dueDate?.toISOString() ?? null,
         reminder_at:
@@ -191,6 +212,18 @@ export default function TaskCreateScreen() {
         reminder_enabled: reminderEnabled && dueDate !== null,
         estimated_minutes: 30,
       });
+      try {
+        const reminderResult = await scheduleTaskReminder(createdTask);
+
+        if (!reminderResult.scheduled && reminderResult.reason === "permission-denied") {
+          Alert.alert(
+            "Task saved",
+            "Your task was saved, but notification permission is disabled. Enable notifications in your phone settings to receive reminders."
+          );
+        }
+      } catch (notificationError) {
+        console.error("Task reminder scheduling failed:", notificationError);
+      }
 
       Alert.alert(
         "Task created",
@@ -423,46 +456,114 @@ export default function TaskCreateScreen() {
             <Ionicons name="chevron-forward" size={18} color={COLORS.muted} />
           </Pressable>
 
-          {/* PRIORITY */}
-          <Text style={styles.fieldLabel}>PRIORITY</Text>
+          
+{/* PRIORITY */}
+<Text style={styles.fieldLabel}>PRIORITY MODE</Text>
 
-          <View style={styles.priorityRow}>
-            {(
-              [
-                { value: "low", label: "Low", color: "#60BFA0" },
-                { value: "medium", label: "Medium", color: "#E5B75E" },
-                { value: "high", label: "High", color: "#E87979" },
-              ] as const
-            ).map((item) => {
-              const selected = priority === item.value;
+<View style={styles.priorityModeRow}>
+  <Pressable
+    onPress={() => setPriorityMode("automatic")}
+    style={[
+      styles.priorityModeOption,
+      priorityMode === "automatic" && styles.priorityModeSelected,
+    ]}
+  >
+    <Ionicons
+      name="sparkles"
+      size={16}
+      color={priorityMode === "automatic" ? COLORS.white : COLORS.muted}
+    />
+    <Text
+      style={[
+        styles.priorityModeText,
+        priorityMode === "automatic" && styles.priorityModeTextSelected,
+      ]}
+    >
+      Automatic
+    </Text>
+  </Pressable>
 
-              return (
-                <Pressable
-                  key={item.value}
-                  onPress={() => setPriority(item.value)}
-                  style={[
-                    styles.priorityOption,
-                    selected && styles.prioritySelected,
-                  ]}
-                >
-                  <View
-                    style={[
-                      styles.priorityDot,
-                      { backgroundColor: item.color },
-                    ]}
-                  />
-                  <Text
-                    style={[
-                      styles.priorityText,
-                      selected && styles.priorityTextSelected,
-                    ]}
-                  >
-                    {item.label}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
+  <Pressable
+    onPress={() => setPriorityMode("manual")}
+    style={[
+      styles.priorityModeOption,
+      priorityMode === "manual" && styles.priorityModeSelected,
+    ]}
+  >
+    <Ionicons
+      name="options"
+      size={16}
+      color={priorityMode === "manual" ? COLORS.white : COLORS.muted}
+    />
+    <Text
+      style={[
+        styles.priorityModeText,
+        priorityMode === "manual" && styles.priorityModeTextSelected,
+      ]}
+    >
+      Manual
+    </Text>
+  </Pressable>
+</View>
+
+{priorityMode === "automatic" ? (
+  <View style={styles.priorityHint}>
+    <Text style={styles.priorityHintLabel}>
+      Syllo suggested priority
+    </Text>
+
+    <Text style={styles.priorityHintValue}>
+      {livePriority.priority.toUpperCase()}
+    </Text>
+
+    <Text style={styles.priorityHintReason}>
+      {livePriority.reason}
+    </Text>
+  </View>
+) : (
+  <>
+    <Text style={styles.fieldLabel}>SELECT PRIORITY</Text>
+
+    <View style={styles.priorityRow}>
+      {(
+        [
+          { value: "low", label: "Low", color: "#60BFA0" },
+          { value: "medium", label: "Medium", color: "#E5B75E" },
+          { value: "high", label: "High", color: "#E87979" },
+        ] as const
+      ).map((item) => {
+        const selected = priority === item.value;
+
+        return (
+          <Pressable
+            key={item.value}
+            onPress={() => setPriority(item.value)}
+            style={[
+              styles.priorityOption,
+              selected && styles.prioritySelected,
+            ]}
+          >
+            <View
+              style={[
+                styles.priorityDot,
+                { backgroundColor: item.color },
+              ]}
+            />
+            <Text
+              style={[
+                styles.priorityText,
+                selected && styles.priorityTextSelected,
+              ]}
+            >
+              {item.label}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  </>
+)}
+
 
           {/* ENERGY */}
           <Text style={styles.fieldLabel}>ENERGY REQUIRED</Text>
@@ -720,6 +821,60 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     padding: 14,
   },
+  
+  priorityModeRow: {
+  flexDirection: "row",
+  gap: 10,
+  marginBottom: 12,
+},
+priorityModeOption: {
+  flex: 1,
+  minHeight: 45,
+  backgroundColor: COLORS.surface,
+  borderRadius: 12,
+  borderWidth: 1,
+  borderColor: COLORS.border,
+  flexDirection: "row",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 8,
+},
+priorityModeSelected: {
+  backgroundColor: "#211B35",
+  borderColor: COLORS.purple,
+},
+priorityModeText: {
+  color: COLORS.muted,
+  fontSize: 13,
+  fontWeight: "500",
+},
+priorityModeTextSelected: {
+  color: COLORS.white,
+},
+priorityHint: {
+  backgroundColor: COLORS.surface,
+  borderWidth: 1,
+  borderColor: COLORS.border,
+  borderRadius: 12,
+  padding: 14,
+  marginBottom: 12,
+  gap: 6,
+},
+priorityHintLabel: {
+  color: COLORS.muted,
+  fontSize: 11,
+},
+priorityHintValue: {
+  color: COLORS.purpleLight,
+  fontSize: 16,
+  fontWeight: "700",
+},
+priorityHintReason: {
+  color: COLORS.muted,
+  fontSize: 12,
+  lineHeight: 18,
+},
+
   priorityRow: {
     flexDirection: "row",
     gap: 9,

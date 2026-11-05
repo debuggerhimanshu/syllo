@@ -212,6 +212,42 @@ export async function getDatabase() {
     CREATE INDEX IF NOT EXISTS idx_tasks_sync_status
     ON tasks(sync_status);
 
+        -- =========================================
+    -- TASK TIME SESSIONS
+    -- =========================================
+
+    CREATE TABLE IF NOT EXISTS task_time_sessions (
+      id TEXT PRIMARY KEY NOT NULL,
+      task_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+
+      started_at TEXT NOT NULL,
+      ended_at TEXT,
+
+      duration_seconds INTEGER NOT NULL DEFAULT 0,
+
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+
+      sync_status TEXT NOT NULL DEFAULT 'pending',
+
+      FOREIGN KEY (task_id)
+        REFERENCES tasks(id)
+        ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_task_time_sessions_task_id
+    ON task_time_sessions(task_id);
+
+    CREATE INDEX IF NOT EXISTS idx_task_time_sessions_user_id
+    ON task_time_sessions(user_id);
+
+    CREATE INDEX IF NOT EXISTS idx_task_time_sessions_started_at
+    ON task_time_sessions(started_at);
+
+    CREATE INDEX IF NOT EXISTS idx_task_time_sessions_sync_status
+    ON task_time_sessions(sync_status);
+
     -- =========================================
     -- BACKGROUND SYNC QUEUE
     -- =========================================

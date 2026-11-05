@@ -515,7 +515,7 @@ useEffect(() => {
       translucent={true}
     />
     <ScrollView
-      style={styles.container}
+      style={{ flex: 1, backgroundColor: "transparent" }}
       contentContainerStyle={styles.content}
       refreshControl={
         <RefreshControl

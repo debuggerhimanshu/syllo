@@ -4,6 +4,8 @@ import {
   ActivityIndicator,
   Alert,
   Pressable,
+  Modal,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -12,6 +14,9 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
+
+import DateTimePicker from "@react-native-community/datetimepicker";
+import { postponeLocalTask } from "@/lib/tasks-repository";
 
 import { useAuth } from "@/context/AuthContext";
 import {
@@ -30,7 +35,17 @@ import {
 import { StatusBar } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import ScrollFade from "@/components/scroll-fade";
-
+import { scheduleTaskReminder } from "@/lib/notifications";
+import { cancelTaskReminder } from "@/lib/notifications";
+import { calculateTaskPriority } from "@/lib/priority-engine";
+import {
+  startTaskSession,
+  pauseTaskSession,
+  getActiveTaskSession,
+  getTaskActualDuration,
+  getTaskSessions,
+  type TaskTimeSession,
+} from "@/lib/time-tracking-repository";
 
 const COLORS = {
   background: "#0A0A0F",
@@ -58,10 +73,48 @@ export default function TaskDetailsScreen() {
   const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState(false);
 
+  // TIME TRACKING
+const [activeSession, setActiveSession] =
+  useState<TaskTimeSession | null>(null);
+
+const [actualSeconds, setActualSeconds] = useState(0);
+const [timerNow, setTimerNow] = useState(Date.now());
+const [timerLoading, setTimerLoading] = useState(true);
+
+  const [showPostponeDatePicker, setShowPostponeDatePicker] = useState(false);
+  const [showPostponeTimePicker, setShowPostponeTimePicker] = useState(false);
+  const [showPostponeReasonModal, setShowPostponeReasonModal] = useState(false);
+  const [postponeDate, setPostponeDate] = useState<Date | null>(null);
+
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [priority, setPriority] = useState<TaskPriority>("medium");
+  const [priorityMode, setPriorityMode] = useState<"manual" | "automatic">("automatic");
   const [energy, setEnergy] = useState<TaskEnergy>("medium");
+
+  const isTaskTimerActive =
+  activeSession?.task_id === id &&
+  activeSession?.ended_at === null;
+
+const currentSessionSeconds = isTaskTimerActive
+  ? Math.max(
+      0,
+      Math.floor(
+        (timerNow - new Date(activeSession.started_at).getTime()) / 1000
+      )
+    )
+  : 0;
+
+const totalActualSeconds =
+  actualSeconds + currentSessionSeconds;
+
+  const livePriority = task
+    ? calculateTaskPriority({
+        category: task.category,
+        due_at: task.due_at,
+        estimated_minutes: task.estimated_minutes,
+      })
+    : null;
 
   const loadTask = useCallback(async () => {
     if (!user?.id || !id) {
@@ -86,6 +139,7 @@ export default function TaskDetailsScreen() {
       setTitle(foundTask.title);
       setDescription(foundTask.description ?? "");
       setPriority(foundTask.priority);
+      setPriorityMode(foundTask.priority_mode ?? "automatic");
       setEnergy(foundTask.energy_level);
 
       const foundCourse = courses.find(
@@ -104,7 +158,111 @@ export default function TaskDetailsScreen() {
   useEffect(() => {
     loadTask();
   }, [loadTask]);
+   
+  // =========================================
+// TIME TRACKING: SESSION RECOVERY
+// =========================================
 
+useEffect(() => {
+  let cancelled = false;
+
+  const loadTimeTracking = async () => {
+    if (!user?.id || !id) return;
+
+    setTimerLoading(true);
+
+    try {
+      const [sessions, active] = await Promise.all([
+        getTaskSessions(user.id, id),
+        getActiveTaskSession(user.id),
+      ]);
+
+      const completedSeconds = sessions
+        .filter((session) => session.ended_at !== null)
+        .reduce(
+          (total, session) => total + session.duration_seconds,
+          0
+        );
+
+      if (!cancelled) {
+        setActualSeconds(completedSeconds);
+        setActiveSession(active);
+        setTimerNow(Date.now());
+      }
+    } catch (error) {
+      console.error("Failed to load time tracking:", error);
+    } finally {
+      if (!cancelled) {
+        setTimerLoading(false);
+      }
+    }
+  };
+
+  loadTimeTracking();
+
+  return () => {
+    cancelled = true;
+  };
+}, [user?.id, id]);
+
+// =========================================
+// TIME TRACKING: LIVE CLOCK
+// =========================================
+
+useEffect(() => {
+  if (!activeSession || activeSession.task_id !== id) return;
+
+  const interval = setInterval(() => {
+    setTimerNow(Date.now());
+  }, 1000);
+
+  return () => clearInterval(interval);
+}, [activeSession, id]);
+
+const handleStartTimer = async () => {
+  if (!user?.id || !task) return;
+
+  try {
+    const session = await startTaskSession(user.id, task.id);
+    setActiveSession(session);
+    setTimerNow(Date.now());
+  } catch (error) {
+    Alert.alert(
+      "Focus session",
+      error instanceof Error
+        ? error.message
+        : "Unable to start the focus session."
+    );
+  }
+};
+
+const handlePauseTimer = async () => {
+  if (!user?.id || !task) return;
+
+  try {
+    await pauseTaskSession(user.id, task.id);
+
+    const [sessions, active] = await Promise.all([
+      getTaskSessions(user.id, task.id),
+      getActiveTaskSession(user.id),
+    ]);
+
+    const completedSeconds = sessions
+      .filter((session) => session.ended_at !== null)
+      .reduce((total, session) => total + session.duration_seconds, 0);
+
+    setActualSeconds(completedSeconds);
+    setActiveSession(active);
+    setTimerNow(Date.now());
+  } catch (error) {
+    Alert.alert(
+      "Focus session",
+      error instanceof Error
+        ? error.message
+        : "Unable to pause the focus session."
+    );
+  }
+};
   const handleSave = async () => {
     if (!user?.id || !task) return;
 
@@ -119,8 +277,21 @@ export default function TaskDetailsScreen() {
       await updateLocalTask(user.id, task.id, {
         title: title.trim(),
         description: description.trim(),
-        priority,
+        priority:
+          priorityMode === "automatic"
+            ? livePriority?.priority ?? priority
+            : priority,
+        priority_mode: priorityMode,
         energy_level: energy,
+      });
+
+      await scheduleTaskReminder({
+        id: task.id,
+        title: title.trim(),
+        description: description.trim(),
+        reminder_at: task.reminder_at,
+        reminder_enabled: task.reminder_enabled,
+        status: task.status,
       });
 
       await loadTask();
@@ -133,27 +304,42 @@ export default function TaskDetailsScreen() {
     }
   };
 
-  const handleComplete = async () => {
-    if (!user?.id || !task) return;
+  
+const handleComplete = async () => {
+  if (!user?.id || !task) return;
 
-    const newStatus =
-      task.status === "completed" ? "todo" : "completed";
+  const newStatus =
+    task.status === "completed" ? "todo" : "completed";
 
-    setSaving(true);
+  setSaving(true);
 
-    try {
-      await updateLocalTask(user.id, task.id, {
+  try {
+    await updateLocalTask(user.id, task.id, {
+      status: newStatus,
+    });
+
+    if (newStatus === "completed") {
+      await cancelTaskReminder(task.id);
+    } else {
+      await scheduleTaskReminder({
+        id: task.id,
+        title: task.title,
+        description: task.description,
+        reminder_at: task.reminder_at,
+        reminder_enabled: task.reminder_enabled,
         status: newStatus,
       });
-
-      await loadTask();
-    } catch (error) {
-      console.error("Task status update failed:", error);
-      Alert.alert("Error", "Could not update task status.");
-    } finally {
-      setSaving(false);
     }
-  };
+
+    await loadTask();
+  } catch (error) {
+    console.error("Task status update failed:", error);
+    Alert.alert("Error", "Could not update task status.");
+  } finally {
+    setSaving(false);
+  }
+};
+
 
   const handleDelete = () => {
     if (!user?.id || !task) return;
@@ -172,6 +358,7 @@ export default function TaskDetailsScreen() {
           onPress: async () => {
             try {
               await deleteLocalTask(user.id, task.id);
+              await cancelTaskReminder(task.id);
               router.back();
             } catch (error) {
               console.error("Task deletion failed:", error);
@@ -182,6 +369,104 @@ export default function TaskDetailsScreen() {
       ]
     );
   };
+
+  const handlePostponeDateChange = (_event: any, selected?: Date) => {
+  setShowPostponeDatePicker(false);
+
+  if (selected) {
+    const updated = new Date(postponeDate ?? new Date());
+    updated.setFullYear(
+      selected.getFullYear(),
+      selected.getMonth(),
+      selected.getDate()
+    );
+
+    setPostponeDate(updated);
+    setShowPostponeTimePicker(true);
+  }
+};
+
+const handlePostponeTimeChange = (_event: any, selected?: Date) => {
+  setShowPostponeTimePicker(false);
+
+  if (!selected) return;
+
+  const updated = new Date(postponeDate ?? new Date());
+
+  updated.setHours(
+    selected.getHours(),
+    selected.getMinutes(),
+    0,
+    0
+  );
+
+  if (updated.getTime() <= Date.now()) {
+    Alert.alert(
+      "Invalid deadline",
+      "Please choose a future date and time."
+    );
+    return;
+  }
+
+  setPostponeDate(updated);
+
+  const count = task?.postponed_count ?? 0;
+
+  if (count >= 2) {
+    setShowPostponeReasonModal(true);
+  } else {
+    savePostponement(updated, null);
+  }
+};
+
+const savePostponement = async (date: Date, reason: string | null) => {
+  if (!user?.id || !task) return;
+
+  try {
+    setSaving(true);
+
+    await postponeLocalTask(
+      user.id,
+      task.id,
+      reason,
+      date.toISOString()
+    );
+
+    await scheduleTaskReminder({
+      id: task.id,
+      title: task.title,
+      description: task.description,
+      reminder_at: task.reminder_enabled ? date.toISOString() : null,
+      reminder_enabled: task.reminder_enabled,
+      status: task.status,
+    });
+
+    setPostponeDate(null);
+
+    await loadTask();
+
+    const newCount = task.postponed_count + 1;
+
+    if (newCount >= 3) {
+      Alert.alert(
+        "Let's make this easier",
+        "This task has been postponed several times. Try breaking it into smaller actions so it's easier to get started."
+      );
+    } else if (newCount === 2) {
+      Alert.alert(
+        "A gentle reminder",
+        "You've postponed this task twice. Try setting aside a small amount of time to get started."
+      );
+    } else {
+      Alert.alert("Task rescheduled", "Your new deadline has been saved.");
+    }
+  } catch (error) {
+    console.error("Postponement failed:", error);
+    Alert.alert("Error", "Could not reschedule this task.");
+  } finally {
+    setSaving(false);
+  }
+};
 
   const formatDate = (value: string | null) => {
     if (!value) return "No deadline set";
@@ -286,6 +571,7 @@ export default function TaskDetailsScreen() {
               setTitle(task.title);
               setDescription(task.description ?? "");
               setPriority(task.priority);
+              setPriorityMode(task.priority_mode ?? "automatic");
               setEnergy(task.energy_level);
             }
 
@@ -432,59 +718,118 @@ export default function TaskDetailsScreen() {
         )}
 
         {/* PRIORITY */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Priority</Text>
+<View style={styles.section}>
+  <Text style={styles.sectionTitle}>Priority</Text>
 
-          {editing ? (
-            <View style={styles.optionRow}>
-              {(
-                ["low", "medium", "high"] as TaskPriority[]
-              ).map((item) => (
-                <Pressable
-                  key={item}
-                  onPress={() => setPriority(item)}
-                  style={[
-                    styles.optionChip,
-                    priority === item && styles.optionSelected,
-                  ]}
-                >
-                  <View
-                    style={[
-                      styles.priorityDot,
-                      { backgroundColor: priorityColor(item) },
-                    ]}
-                  />
-                  <Text
-                    style={[
-                      styles.optionText,
-                      priority === item && styles.optionTextSelected,
-                    ]}
-                  >
-                    {item.charAt(0).toUpperCase() + item.slice(1)}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
-          ) : (
-            <View style={styles.infoCard}>
-              <View style={styles.infoIcon}>
-                <Ionicons
-                  name="flag-outline"
-                  size={20}
-                  color={priorityColor(task.priority)}
-                />
-              </View>
+  {editing ? (
+    <>
+      {/* PRIORITY MODE */}
+      <View style={styles.priorityModeRow}>
+        <Pressable
+          onPress={() => setPriorityMode("automatic")}
+          style={[
+            styles.priorityModeOption,
+            priorityMode === "automatic" && styles.priorityModeSelected,
+          ]}
+        >
+          <Ionicons name="sparkles-outline" size={16} color={priorityMode === "automatic" ? COLORS.purpleLight : COLORS.muted} />
+          <Text style={[
+            styles.priorityModeText,
+            priorityMode === "automatic" && styles.priorityModeTextSelected,
+          ]}>
+            Automatic
+          </Text>
+        </Pressable>
 
-              <View style={styles.infoContent}>
-                <Text style={styles.infoLabel}>Current priority</Text>
-                <Text style={styles.infoValue}>
-                  {task.priority.charAt(0).toUpperCase() +
-                    task.priority.slice(1)}
-                </Text>
-              </View>
-            </View>
-          )}
+        <Pressable
+          onPress={() => setPriorityMode("manual")}
+          style={[
+            styles.priorityModeOption,
+            priorityMode === "manual" && styles.priorityModeSelected,
+          ]}
+        >
+          <Ionicons name="options" size={16} color={priorityMode === "manual" ? COLORS.purpleLight : COLORS.muted} />
+          <Text style={[
+            styles.priorityModeText,
+            priorityMode === "manual" && styles.priorityModeTextSelected,
+          ]}>
+            Manual
+          </Text>
+        </Pressable>
+      </View>
+
+      {priorityMode === "automatic" ? (
+        <View style={styles.priorityHint}>
+          <Text style={styles.priorityHintLabel}>
+            CALCULATED PRIORITY
+          </Text>
+
+          <Text style={[
+            styles.priorityHintValue,
+            { color: priorityColor(livePriority?.priority ?? "medium") },
+          ]}>
+            {(livePriority?.priority ?? "medium").toUpperCase()}
+          </Text>
+
+          <Text style={styles.priorityHintReason}>
+            {livePriority?.reason ?? "Priority will be calculated automatically."}
+          </Text>
         </View>
+      ) : (
+        <View style={styles.optionRow}>
+          {(["low", "medium", "high"] as TaskPriority[]).map((item) => (
+            <Pressable
+              key={item}
+              onPress={() => setPriority(item)}
+              style={[
+                styles.optionChip,
+                priority === item && styles.optionSelected,
+              ]}
+            >
+              <View
+                style={[
+                  styles.priorityDot,
+                  { backgroundColor: priorityColor(item) },
+                ]}
+              />
+
+              <Text
+                style={[
+                  styles.optionText,
+                  priority === item && styles.optionTextSelected,
+                ]}
+              >
+                {item.charAt(0).toUpperCase() + item.slice(1)}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      )}
+    </>
+  ) : (
+    <View style={styles.infoCard}>
+      <View style={styles.infoIcon}>
+        <Ionicons
+          name="flag-outline"
+          size={20}
+          color={priorityColor(task.priority)}
+        />
+      </View>
+
+      <View style={styles.infoContent}>
+        <Text style={styles.infoLabel}>Current priority</Text>
+
+        <Text style={styles.infoValue}>
+          {task.priority.charAt(0).toUpperCase() + task.priority.slice(1)}
+        </Text>
+
+        <Text style={styles.infoSubValue}>
+          {task.priority_mode === "manual" ? "Manually assigned" : "Automatically calculated"}
+        </Text>
+      </View>
+    </View>
+  )}
+</View>
 
         {/* ENERGY */}
         <View style={styles.section}>
@@ -560,6 +905,67 @@ export default function TaskDetailsScreen() {
           </View>
         </View>
 
+                {/* FOCUS TIMER */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Focus timer</Text>
+
+          <View style={styles.focusTimerCard}>
+            <Text style={styles.focusTimerLabel}>
+              {isTaskTimerActive ? "FOCUS SESSION IN PROGRESS" : "TOTAL TIME SPENT"}
+            </Text>
+
+            <Text style={styles.focusTimerValue}>
+              {[
+                Math.floor(totalActualSeconds / 3600),
+                Math.floor((totalActualSeconds % 3600) / 60),
+                totalActualSeconds % 60,
+              ]
+                .map((value) => String(value).padStart(2, "0"))
+                .join(":")}
+            </Text>
+
+            <View style={styles.focusTimerComparison}>
+              <Text style={styles.focusTimerMeta}>
+                Estimated: {task.estimated_minutes} min
+              </Text>
+              <Text style={styles.focusTimerMeta}>
+                Actual: {Math.floor(totalActualSeconds / 60)} min
+              </Text>
+            </View>
+
+            {activeSession && activeSession.task_id !== id ? (
+              <Text style={styles.focusTimerWarning}>
+                Another task's focus session is running.
+              </Text>
+            ) : (
+              <Pressable
+                style={[
+                  styles.focusTimerButton,
+                  isTaskTimerActive && styles.focusTimerPauseButton,
+                  task.status === "completed" && styles.disabled,
+                ]}
+                disabled={task.status === "completed" || timerLoading}
+                onPress={
+                  isTaskTimerActive ? handlePauseTimer : handleStartTimer
+                }
+              >
+                <Ionicons
+                  name={isTaskTimerActive ? "pause" : "play"}
+                  size={18}
+                  color="#FFFFFF"
+                />
+                <Text style={styles.focusTimerButtonText}>
+                  {isTaskTimerActive
+                    ? "Pause Session"
+                    : actualSeconds > 0
+                      ? "Resume Focus"
+                      : "Start Focus"}
+                </Text>
+              </Pressable>
+            )}
+          </View>
+        </View>
+
         
           {/* REMINDER */}
           <View style={styles.section}>
@@ -610,6 +1016,25 @@ export default function TaskDetailsScreen() {
                 <Text style={styles.primaryButtonText}>Save Changes</Text>
               </>
             )}
+          </Pressable>
+        )}
+
+        {/* POSTPONE TASK */}
+        {!editing && task.status !== "completed" && (
+          <Pressable
+            style={styles.postponeButton}
+            onPress={() => {
+              setPostponeDate(
+                task.due_at && new Date(task.due_at) > new Date()
+                  ? new Date(task.due_at)
+                  : new Date(Date.now() + 24 * 60 * 60 * 1000)
+              );
+              setShowPostponeDatePicker(true);
+            }}
+            disabled={saving}
+          >
+            <Ionicons name="calendar-outline" size={18} color={COLORS.purpleLight} />
+            <Text style={styles.postponeButtonText}>Postpone Task</Text>
           </Pressable>
         )}
 
@@ -666,6 +1091,92 @@ export default function TaskDetailsScreen() {
         </Text>
       </ScrollView>
       {/* </View> */}
+        {/* POSTPONEMENT REASON MODAL */}
+<Modal
+  visible={showPostponeReasonModal}
+  transparent
+  animationType="fade"
+  onRequestClose={() => {
+    setShowPostponeReasonModal(false);
+    setPostponeDate(null);
+  }}
+>
+  <View style={styles.reasonModalOverlay}>
+    <View style={styles.reasonModalCard}>
+      <View style={styles.reasonModalIcon}>
+        <Ionicons
+          name="help-circle-outline"
+          size={25}
+          color={COLORS.purpleLight}
+        />
+      </View>
+
+      <Text style={styles.reasonModalTitle}>
+        What's getting in the way?
+      </Text>
+
+      <Text style={styles.reasonModalSubtitle}>
+        You've postponed this task several times. Let's understand why.
+      </Text>
+
+      {[
+        "Too difficult",
+        "No time",
+        "Low motivation",
+        "Forgot",
+        "Other",
+      ].map((reason) => (
+        <Pressable
+          key={reason}
+          style={styles.reasonOption}
+          onPress={() => {
+            if (!postponeDate) return;
+
+            setShowPostponeReasonModal(false);
+            savePostponement(postponeDate, reason);
+          }}
+        >
+          <Text style={styles.reasonOptionText}>{reason}</Text>
+          <Ionicons
+            name="chevron-forward"
+            size={17}
+            color={COLORS.muted}
+          />
+        </Pressable>
+      ))}
+
+      <Pressable
+        style={styles.reasonCancelButton}
+        onPress={() => {
+          setShowPostponeReasonModal(false);
+          setPostponeDate(null);
+        }}
+      >
+        <Text style={styles.reasonCancelText}>Cancel</Text>
+      </Pressable>
+    </View>
+  </View>
+</Modal>
+
+      {showPostponeDatePicker && (
+      <DateTimePicker
+        value={postponeDate ?? new Date()}
+        mode="date"
+        minimumDate={new Date()}
+        display={Platform.OS === "ios" ? "spinner" : "default"}
+        onChange={handlePostponeDateChange}
+      />
+    )}
+
+    {showPostponeTimePicker && (
+      <DateTimePicker
+        value={postponeDate ?? new Date()}
+        mode="time"
+        display={Platform.OS === "ios" ? "spinner" : "default"}
+        onChange={handlePostponeTimeChange}
+      />
+    )}
+
       </ScrollFade>
   );
 }
@@ -929,4 +1440,199 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: 25,
   },
+
+  priorityModeRow: {
+  flexDirection: "row",
+  gap: 10,
+  marginBottom: 12,
+},
+priorityModeOption: {
+  flex: 1,
+  minHeight: 45,
+  backgroundColor: COLORS.surface,
+  borderRadius: 12,
+  borderWidth: 1,
+  borderColor: COLORS.border,
+  flexDirection: "row",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 8,
+},
+priorityModeSelected: {
+  backgroundColor: "#211B35",
+  borderColor: COLORS.purple,
+},
+priorityModeText: {
+  color: COLORS.muted,
+  fontSize: 13,
+  fontWeight: "500",
+},
+priorityModeTextSelected: {
+  color: COLORS.white,
+},
+priorityHint: {
+  backgroundColor: COLORS.surface,
+  borderWidth: 1,
+  borderColor: COLORS.border,
+  borderRadius: 12,
+  padding: 14,
+  marginBottom: 12,
+  gap: 6,
+},
+priorityHintLabel: {
+  color: COLORS.muted,
+  fontSize: 10,
+  fontWeight: "700",
+  letterSpacing: 1,
+},
+priorityHintValue: {
+  fontSize: 17,
+  fontWeight: "800",
+},
+priorityHintReason: {
+  color: COLORS.muted,
+  fontSize: 12,
+  lineHeight: 18,
+},
+
+postponeButton: {
+  minHeight: 48,
+  borderRadius: 12,
+  borderWidth: 1,
+  borderColor: COLORS.purple,
+  backgroundColor: "#211B35",
+  flexDirection: "row",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 9,
+  marginTop: 16,
+},
+postponeButtonText: {
+  color: COLORS.purpleLight,
+  fontSize: 13,
+  fontWeight: "700",
+},
+
+
+reasonModalOverlay: {
+  flex: 1,
+  backgroundColor: "rgba(0,0,0,0.75)",
+  justifyContent: "center",
+  alignItems: "center",
+  padding: 24,
+},
+reasonModalCard: {
+  width: "100%",
+  backgroundColor: COLORS.surface,
+  borderRadius: 20,
+  borderWidth: 1,
+  borderColor: COLORS.border,
+  padding: 20,
+},
+reasonModalIcon: {
+  width: 48,
+  height: 48,
+  borderRadius: 15,
+  backgroundColor: "#27203D",
+  alignItems: "center",
+  justifyContent: "center",
+  marginBottom: 16,
+},
+reasonModalTitle: {
+  color: COLORS.text,
+  fontSize: 19,
+  fontWeight: "800",
+  marginBottom: 7,
+},
+reasonModalSubtitle: {
+  color: COLORS.muted,
+  fontSize: 12,
+  lineHeight: 19,
+  marginBottom: 17,
+},
+reasonOption: {
+  minHeight: 46,
+  borderTopWidth: 1,
+  borderTopColor: COLORS.border,
+  flexDirection: "row",
+  alignItems: "center",
+  justifyContent: "space-between",
+},
+reasonOptionText: {
+  color: COLORS.text,
+  fontSize: 13,
+  fontWeight: "500",
+},
+reasonCancelButton: {
+  marginTop: 12,
+  minHeight: 43,
+  alignItems: "center",
+  justifyContent: "center",
+  backgroundColor: COLORS.surfaceLight,
+  borderRadius: 11,
+},
+reasonCancelText: {
+  color: COLORS.muted,
+  fontSize: 13,
+  fontWeight: "600",
+},
+
+  focusTimerCard: {
+    backgroundColor: "#14141F",
+    borderRadius: 18,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: "#29243D",
+    alignItems: "center",
+  },
+  focusTimerLabel: {
+    color: "#A5A1B5",
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 1.2,
+  },
+  focusTimerValue: {
+    color: "#FFFFFF",
+    fontSize: 38,
+    fontWeight: "700",
+    marginTop: 12,
+    fontVariant: ["tabular-nums"],
+  },
+  focusTimerComparison: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    width: "100%",
+    marginTop: 14,
+  },
+  focusTimerMeta: {
+    color: "#B8B4C7",
+    fontSize: 12,
+  },
+  focusTimerButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#7657F6",
+    borderRadius: 12,
+    paddingVertical: 13,
+    paddingHorizontal: 24,
+    marginTop: 20,
+    gap: 9,
+    width: "100%",
+  },
+  focusTimerPauseButton: {
+    backgroundColor: "#38304F",
+  },
+  focusTimerButtonText: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  focusTimerWarning: {
+    color: "#F0B86E",
+    fontSize: 12,
+    marginTop: 16,
+    textAlign: "center",
+  },
+
 });

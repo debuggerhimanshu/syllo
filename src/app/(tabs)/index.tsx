@@ -369,7 +369,8 @@ const [profileMenuVisible, setProfileMenuVisible] = useState(false);
     "rgba(8, 9, 13, 0)",
   ]}
 >
-  <ScrollView
+    <ScrollView
+    style={{ flex: 1, backgroundColor: "transparent" }}
     contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
         refreshControl={

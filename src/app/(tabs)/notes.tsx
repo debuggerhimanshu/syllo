@@ -299,7 +299,7 @@ const loadNotes = useCallback(async (showLoader = false) => {
           </View>
 
           {note.is_pinned ? (
-            <Text style={styles.pinIcon}>📌</Text>
+            <Text style={styles.pinIcon}></Text>
           ) : null}
         </View>
 
@@ -496,7 +496,7 @@ const loadNotes = useCallback(async (showLoader = false) => {
               {(
                 [
                   { value: "all", label: "All notes" },
-                  { value: "pinned", label: "📌 Pinned" },
+                  { value: "pinned", label: " Pinned" },
                   { value: "high", label: "High priority" },
                   { value: "medium", label: "Medium" },
                   { value: "low", label: "Low" },

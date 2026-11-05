@@ -1,6 +1,14 @@
 
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
 
 export type ClassReminder = {
   id: string;
@@ -49,6 +57,92 @@ export async function requestReminderPermission() {
   const requested = await Notifications.requestPermissionsAsync();
   return requested.granted;
 }
+
+
+const TASK_REMINDER_PREFIX = "syllo-task-reminder:";
+
+type TaskReminderInput = {
+  id: string;
+  title: string;
+  description?: string;
+  reminder_at: string | null;
+  reminder_enabled: number;
+  status: string;
+};
+
+export async function cancelTaskReminder(taskId: string) {
+  const identifier = `${TASK_REMINDER_PREFIX}${taskId}`;
+
+  const scheduled =
+    await Notifications.getAllScheduledNotificationsAsync();
+
+  const existing = scheduled.find(
+    (item) => item.identifier === identifier
+  );
+
+  if (existing) {
+    await Notifications.cancelScheduledNotificationAsync(identifier);
+  }
+}
+
+export async function scheduleTaskReminder(task: TaskReminderInput) {
+  // Remove any previous reminder before scheduling a replacement.
+  await cancelTaskReminder(task.id);
+
+  if (
+    !task.reminder_enabled ||
+    !task.reminder_at ||
+    task.status === "completed"
+  ) {
+    return { scheduled: false, reason: "disabled" as const };
+  }
+
+  const reminderDate = new Date(task.reminder_at);
+
+  if (
+    Number.isNaN(reminderDate.getTime()) ||
+    reminderDate.getTime() <= Date.now()
+  ) {
+    return { scheduled: false, reason: "invalid-or-past-date" as const };
+  }
+
+  const permissionGranted = await requestReminderPermission();
+
+  if (!permissionGranted) {
+    return { scheduled: false, reason: "permission-denied" as const };
+  }
+
+  if (Platform.OS === "android") {
+    await Notifications.setNotificationChannelAsync("task-reminders-v1", {
+      name: "Task reminders",
+      description: "Deadline reminders for your tasks",
+      importance: Notifications.AndroidImportance.HIGH,
+      vibrationPattern: [0, 250, 250, 250],
+    });
+  }
+
+  await Notifications.scheduleNotificationAsync({
+    identifier: `${TASK_REMINDER_PREFIX}${task.id}`,
+    content: {
+      title: "Task deadline",
+      body: `It's time to work on: ${task.title}`,
+      data: {
+        type: "task-reminder",
+        taskId: task.id,
+      },
+      sound: true,
+    },
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.DATE,
+      date: reminderDate,
+      channelId:
+        Platform.OS === "android" ? "task-reminders-v1" : undefined,
+    },
+  });
+
+  return { scheduled: true };
+}
+
 
 function parseDate(value?: string | null): Date | null {
   if (!value) return null;
