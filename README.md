@@ -1,56 +1,290 @@
-# Welcome to your Expo app 👋
+# Syllo
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+> **Student productivity, reimagined.**
 
-## Get started
+Syllo is a student productivity application designed to bring classes, notes, assignments, deadlines, reminders, and AI-powered academic assistance into one connected experience.
 
-1. Install dependencies
+Instead of switching between multiple tools to manage academic life, Syllo aims to provide students with a single focused environment for their everyday academic workflow.
 
-   ```bash
-   npm install
-   ```
+---
 
-2. Start the app
+## 📱 Download Syllo
 
-   ```bash
-   npx expo start
-   ```
+The Android build is available for testing.
 
-In the output, you'll find options to open the app in a
+### Download APK
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+[**⬇️ Download Syllo for Android**](https://drive.google.com/file/d/10wjEtDwG-XQ09JsnVjyyFcbfuL8SiJeq/view?usp=drivesdk)
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+> Open the Google Drive link and download the latest APK to install Syllo on your Android device.
 
-## Get a fresh project
+**Note:** You may need to allow installation from unknown sources when installing the APK outside the Google Play Store.
 
-When you're ready, run:
+---
 
-```bash
-npm run reset-project
+## ✨ Features
+
+### 📅 Timetable & Classes
+
+Manage your academic schedule and keep track of upcoming classes from one place.
+
+- View scheduled classes
+- Organize your timetable
+- Access upcoming classes
+- Receive class-related reminders
+
+### 📝 Notes
+
+Capture and organize academic information digitally.
+
+- Create and manage notes
+- Keep study material organized
+- Quickly access important information
+
+### 🤖 AI Note Summarization
+
+Turn longer notes into concise, easier-to-review information.
+
+**Write → Summarize → Review**
+
+The AI layer is designed to reduce the friction between capturing information and reviewing it.
+
+### 📚 Assignment Management
+
+Keep track of academic tasks and deadlines.
+
+- Create assignments
+- Set deadlines
+- Track pending work
+- Manage upcoming tasks
+- Receive reminders
+
+### ✍️ AI Assignment Helper
+
+Syllo includes an AI-powered assignment assistance workflow.
+
+Provide an assignment prompt and generate structured assistance that can be reviewed and edited before use.
+
+The system also supports generating a **handwritten-style PDF** from the resulting content.
+
+### 🔔 Notifications
+
+Stay aware of important academic events such as upcoming classes and assignment deadlines.
+
+### 🔐 Authentication
+
+Syllo uses secure authentication to manage user accounts and sessions.
+
+---
+
+## 🛠️ Tech Stack
+
+### Frontend
+
+- React Native
+- Expo
+- TypeScript
+
+### Backend
+
+- Supabase
+- PostgreSQL
+- Supabase Authentication
+
+### AI
+
+- AI-powered summarization
+- AI assignment assistance
+
+### Mobile / Native
+
+- Expo Notifications
+- Expo Secure Store
+- Expo Audio
+- Expo SQLite
+
+### Build & Deployment
+
+- Expo EAS
+- Android APK
+
+---
+
+## 🏗️ Project Architecture
+
+```text
+                    SYLLO
+                      │
+                      ▼
+              React Native + Expo
+                      │
+        ┌─────────────┼─────────────┐
+        │             │             │
+        ▼             ▼             ▼
+    Timetable       Notes       Assignments
+        │             │             │
+        └─────────────┼─────────────┘
+                      │
+                      ▼
+                  Supabase
+              ┌───────┼───────┐
+              │       │       │
+              ▼       ▼       ▼
+            Auth   Database  Storage
+                      │
+                      ▼
+                   AI Layer
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+---
 
-### Other setup steps
+## 🎯 Product Vision
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+Syllo started with a simple question:
 
-## Learn more
+> **What if your academic life lived in one place?**
 
-To learn more about developing your project with Expo, look at the following resources:
+The long-term goal is to evolve Syllo beyond a basic productivity application into a more intelligent academic companion.
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+Future possibilities include:
 
-## Join the community
+- VTOP / academic data integration
+- Smart study planning
+- Exam preparation planning
+- Attendance intelligence
+- AI academic assistant
+- Campus events and opportunities
+- Student collaboration
+- Context-aware academic notifications
+- Academic analytics
 
-Join our community of developers creating universal apps.
+---
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+## 🚀 Getting Started
+
+### Prerequisites
+
+Make sure you have the following installed:
+
+- Node.js
+- npm
+- Git
+- Expo CLI / Expo tooling
+- Android Studio or an Android device
+
+### Clone the repository
+
+```bash
+git clone https://github.com/YOUR_USERNAME/syllo.git
+cd syllo
+```
+
+### Install dependencies
+
+```bash
+npm install
+```
+
+### Start the development server
+
+```bash
+npx expo start
+```
+
+You can then run the application using an Android emulator or a connected physical device.
+
+---
+
+## 🔑 Environment Variables
+
+Create a `.env` file in the project root:
+
+```env
+EXPO_PUBLIC_SUPABASE_URL=your_supabase_url
+EXPO_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+```
+
+Never commit your actual environment variables or private credentials to GitHub.
+
+---
+
+## 📸 Screenshots
+
+> Screenshots will be added here as the UI evolves.
+
+| Dashboard | Timetable |
+|---|---|
+| Add screenshot | Add screenshot |
+
+| Notes | Assignments |
+|---|---|
+| Add screenshot | Add screenshot |
+
+| AI Assistant | Profile |
+|---|---|
+| Add screenshot | Add screenshot |
+
+---
+
+## 🧪 Project Status
+
+**Current Status:** Active Development
+
+The current version focuses on establishing the core student productivity workflow and mobile application foundation.
+
+Features and UI are actively evolving.
+
+---
+
+## 🗺️ Roadmap
+
+- [x] Authentication
+- [x] Student account system
+- [x] Initial mobile application
+- [x] Timetable foundation
+- [x] Notes
+- [x] Assignment management
+- [x] AI integration foundation
+- [x] Android build
+- [ ] VTOP integration
+- [ ] Smart study planner
+- [ ] Attendance intelligence
+- [ ] Exam planner
+- [ ] AI academic assistant
+- [ ] Campus intelligence
+- [ ] Student collaboration
+- [ ] iOS release
+- [ ] Production release
+
+---
+
+## 👨‍💻 Developer
+
+**Himanshu Ranjan**
+
+B.Tech CSE — Cybersecurity  
+VIT Bhopal University
+
+Developer · Designer · Builder
+
+---
+
+## 📄 License
+
+This project is currently intended for educational, experimental, and portfolio purposes.
+
+License details may be added as the project moves toward public release.
+
+---
+
+## ⭐ Support
+
+If you find Syllo interesting, consider giving the repository a ⭐ on GitHub.
+
+Feedback, ideas, and contributions are welcome.
+
+---
+
+### Syllo
+
+**Plan better. Learn smarter. Stay ahead.**

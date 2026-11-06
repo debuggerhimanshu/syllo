@@ -4,36 +4,52 @@
     "slug": "syllo",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+
+    "icon": "./assets/images/icon-real.png",
+
     "scheme": "syllo",
     "userInterfaceStyle": "automatic",
+
     "ios": {
-      "icon": "./assets/expo.icon"
+      "icon": "./assets/images/icon-real.png",
+      "bundleIdentifier": "com.zodiacdeveloper.syllo"
     },
+
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "backgroundColor": "#090018",
+        "foregroundImage": "./assets/images/icon-12.png"
       },
+
       "predictiveBackGestureEnabled": false,
-      "package": "com.zodiacdeveloper.syllo"
+
+      "package": "com.zodiacdeveloper.syllo",
+
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+      ]
     },
+
     "web": {
       "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/icon-real.png"
     },
+
     "plugins": [
       "expo-router",
+
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#208AEF",
-          "image": "./assets/images/splash-icon.png",
-          "imageWidth": 76
+          "backgroundColor": "#090018",
+          "image": "./assets/images/icon-12.png",
+          "imageWidth": 200
         }
       ],
+
       "expo-secure-store",
       "@react-native-community/datetimepicker",
       "expo-notifications",
@@ -41,10 +57,12 @@
       "expo-asset",
       "expo-sqlite"
     ],
+
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
     },
+
     "extra": {
       "router": {},
       "eas": {
