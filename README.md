@@ -214,15 +214,12 @@ Never commit your actual environment variables or private credentials to GitHub.
 
 | Dashboard | Timetable |
 |---|---|
-| Add screenshot | Add screenshot |
+| <img width="716" height="1600" alt="WhatsApp Image 2026-11-06 at 20 50 45" src="https://github.com/user-attachments/assets/6b251aca-b6f5-49b6-8b34-8d161cfba6b7" /> | <img width="716" height="1600" alt="WhatsApp Image 2026-11-06 at 20 50 46" src="https://github.com/user-attachments/assets/7744bd09-f5a2-41dc-98d9-30f25003586b" /> |
 
 | Notes | Assignments |
 |---|---|
-| Add screenshot | Add screenshot |
+| <img width="716" height="1600" alt="WhatsApp Image 2026-11-06 at 20 50 46 (1)" src="https://github.com/user-attachments/assets/0cb579ea-63aa-41b5-bfa0-34cdb202eaa2" /> | <img width="716" height="1600" alt="WhatsApp Image 2026-11-06 at 20 50 46 (2)" src="https://github.com/user-attachments/assets/f60e1135-135c-4551-b9cf-8f3fb4afc70e" /> |
 
-| AI Assistant | Profile |
-|---|---|
-| Add screenshot | Add screenshot |
 
 ---
 
