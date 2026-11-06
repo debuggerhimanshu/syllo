@@ -109,52 +109,60 @@ const loadNotes = useCallback(async (showLoader = false) => {
     }
 
     // STEP 2: Refresh data from Supabase in the background.
-    currentStep = "Fetching courses and notes from Supabase";
-    const [courseResult, noteResult] = await Promise.all([
-      supabase
-        .from("courses")
-        .select("id, name, code, faculty, color")
-        .eq("user_id", user.id)
-        .order("name", { ascending: true }),
+// Cloud refresh is best-effort: local SQLite data is already available.
+try {
+  currentStep = "Fetching courses and notes from Supabase";
 
-      supabase
-        .from("notes")
-        .select(
-  "id, user_id, course_id, title, content, note_date, priority, is_pinned, created_at, updated_at"
-)
-        .eq("user_id", user.id)
-        .order("note_date", { ascending: false })
-        .order("updated_at", { ascending: false }),
-    ]);
+  const [courseResult, noteResult] = await Promise.all([
+    supabase
+      .from("courses")
+      .select("id, name, code, faculty, color")
+      .eq("user_id", user.id)
+      .order("name", { ascending: true }),
 
-    if (courseResult.error) throw courseResult.error;
-    if (noteResult.error) throw noteResult.error;
+    supabase
+      .from("notes")
+      .select(
+        "id, user_id, course_id, title, content, note_date, priority, is_pinned, created_at, updated_at"
+      )
+      .eq("user_id", user.id)
+      .order("note_date", { ascending: false })
+      .order("updated_at", { ascending: false }),
+  ]);
 
-    // STEP 3: Cache cloud courses locally.
-    currentStep = "Saving remote courses to SQLite";
-    for (const course of courseResult.data ?? []) {
-      await saveLocalCourse(
-        {
-          ...course,
-          user_id: user.id,
-        },
-        false
-      );
-    }
+  if (courseResult.error) throw courseResult.error;
+  if (noteResult.error) throw noteResult.error;
 
-    // STEP 4: Cache cloud notes without overwriting pending edits.
-    currentStep = "Saving remote notes to SQLite";
-    await saveRemoteNotes(user.id, noteResult.data ?? []);
+  // STEP 3: Cache cloud courses locally.
+  currentStep = "Saving remote courses to SQLite";
 
-    // STEP 5: Refresh the UI from SQLite.
-    currentStep = "Reloading updated local data";
-    const [updatedCourses, updatedNotes] = await Promise.all([
-      getLocalCourses(user.id),
-      getLocalNotes(user.id),
-    ]);
+  for (const course of courseResult.data ?? []) {
+    await saveLocalCourse(
+      {
+        ...course,
+        user_id: user.id,
+      },
+      false
+    );
+  }
 
-    setCourses(updatedCourses);
-    setNotes(updatedNotes);
+  // STEP 4: Cache cloud notes without overwriting pending edits.
+  currentStep = "Saving remote notes to SQLite";
+  await saveRemoteNotes(user.id, noteResult.data ?? []);
+
+  // STEP 5: Refresh the UI from SQLite.
+  currentStep = "Reloading updated local data";
+
+  const [updatedCourses, updatedNotes] = await Promise.all([
+    getLocalCourses(user.id),
+    getLocalNotes(user.id),
+  ]);
+
+  setCourses(updatedCourses);
+  setNotes(updatedNotes);
+} catch (cloudError) {
+  console.warn("Background cloud notes refresh skipped:", cloudError);
+}
   } catch (err) {
     const errorMessage =
       err instanceof Error ? err.message : String(err);
