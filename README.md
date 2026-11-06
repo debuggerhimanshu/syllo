@@ -210,7 +210,6 @@ Never commit your actual environment variables or private credentials to GitHub.
 
 ## 📸 Screenshots
 
-> Screenshots will be added here as the UI evolves.
 
 | Dashboard | Timetable |
 |---|---|
